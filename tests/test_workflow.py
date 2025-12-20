@@ -92,10 +92,11 @@ class TestWorkflowGraphOperations:
         assert len(roots) == 1
 
     def test_roots_empty_when_all_defined(self, simple_workflow: Workflow):
-        """Test roots() is empty when all references are defined."""
-        # simple_workflow has 'input' defined as data, so no external refs
+        """Test roots() includes data inputs (graph roots)."""
+        # simple_workflow has 'input' defined as data and used by a task,
+        # so it is a graph root (even though it's not an external input).
         roots = simple_workflow.roots()
-        assert len(roots) == 0
+        assert roots == ['input']
 
     def test_leafs_single_output(self, simple_workflow: Workflow):
         """Test leafs() with single output."""

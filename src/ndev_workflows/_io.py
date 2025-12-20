@@ -36,6 +36,7 @@ def _workflow_to_data(
     *,
     name: str | None = None,
     description: str | None = None,
+    include_modified: bool = True,
 ) -> dict:
     """Convert a workflow to the new format data structure.
 
@@ -62,7 +63,8 @@ def _workflow_to_data(
         data['name'] = name
     if description:
         data['description'] = description
-    data['modified'] = datetime.now().date().isoformat()
+    if include_modified:
+        data['modified'] = datetime.now().date().isoformat()
 
     # Build tasks
     tasks = {}
@@ -184,12 +186,14 @@ def load_workflow(filename: str | Path, *, lazy: bool = False) -> Workflow:
     >>> workflow.set("input", image_data)
     >>> result = workflow.get("output")
     """
-    # Legacy format: load directly and optionally resolve functions
+    # Legacy format: load lazily, normalize to the new in-memory representation,
+    # then optionally resolve imports.
     if is_legacy_format(filename):
-        workflow = load_legacy_lazy(filename)
-        if not lazy:
-            _resolve_function_references(workflow)
-        return workflow
+        legacy_workflow = load_legacy_lazy(filename)
+        legacy_data = _workflow_to_data(
+            legacy_workflow, include_modified=False
+        )
+        return _data_to_workflow(legacy_data, lazy=lazy)
 
     # New format: parse YAML and build workflow
     try:
@@ -291,14 +295,17 @@ def get_workflow_metadata(filename: str | Path) -> dict:
     """
     # Handle legacy format
     if is_legacy_format(filename):
-        workflow = load_legacy_lazy(filename)
+        legacy_workflow = load_legacy_lazy(filename)
+        legacy_data = _workflow_to_data(
+            legacy_workflow, include_modified=False
+        )
         return {
             'name': None,
             'description': None,
             'modified': None,
-            'inputs': workflow.roots(),
-            'outputs': workflow.leafs(),
-            'tasks': list(workflow._tasks.keys()),
+            'inputs': legacy_data.get('inputs', []),
+            'outputs': legacy_data.get('outputs', []),
+            'tasks': list(legacy_data.get('tasks', {}).keys()),
             'legacy': True,
         }
 

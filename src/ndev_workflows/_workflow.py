@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
-from inspect import signature
 from typing import TYPE_CHECKING, Any
 
 from dask.threaded import get as dask_get
@@ -89,26 +88,14 @@ class Workflow:
             self._tasks[name] = func_or_data
             return
 
-        # Get default parameter values from function signature
-        try:
-            sig = signature(func_or_data)
-            defaults = {
-                param.name: param.default
-                for param in sig.parameters.values()
-                if param.default is not param.empty
-            }
-        except (ValueError, TypeError):
-            # Some built-in functions don't have inspectable signatures
-            defaults = {}
-
-        # Merge defaults with provided kwargs (kwargs take precedence)
-        merged_kwargs = {**defaults, **kwargs}
-
-        # Create partial function with kwargs baked in
-        func_partial = partial(func_or_data, **merged_kwargs)
+        func: Callable
+        # Store only explicitly provided kwargs; do not bake in defaults.
+        # This keeps YAML exports minimal/stable and matches typical
+        # napari-workflows behavior.
+        func = partial(func_or_data, **kwargs) if kwargs else func_or_data
 
         # Store as dask-compatible task tuple
-        self._tasks[name] = (func_partial, *args)
+        self._tasks[name] = (func, *args)
 
     def get(self, name: str | list[str]) -> Any:
         """Execute the workflow graph and return the result for task(s).
@@ -145,11 +132,13 @@ class Workflow:
         return dask_get(self._tasks, name)
 
     def roots(self) -> list[str]:
-        """Return the root nodes (inputs) of the workflow.
+        """Return workflow input names (graph roots).
 
-        Roots are names that are referenced by tasks but are not defined
-        as tasks themselves. These represent external inputs that must
-        be provided before the workflow can execute.
+        Roots are names that are used as inputs to processing tasks and are
+        not produced by any other processing task.
+
+        Importantly, roots remain roots even after you provide data via
+        ``workflow.set(root_name, data)``.
 
         Returns
         -------
@@ -158,21 +147,32 @@ class Workflow:
 
         Notes
         -----
-        This is equivalent to `external_inputs()`. The name "roots" is
-        kept for compatibility with napari-workflows terminology.
+        This is *not* the same as :meth:`external_inputs`, which returns only
+        undefined inputs (i.e. roots that have not been provided as data tasks).
         """
-        roots = []
-        for task in self._tasks.values():
-            # Only tuples can have arguments that reference other tasks
-            if isinstance(task, tuple) and len(task) > 1:
-                for arg in task[1:]:
-                    if (
-                        isinstance(arg, str)
-                        and arg not in self._tasks
-                        and arg not in roots
-                    ):
-                        roots.append(arg)
-        return roots
+        # Build a dependency edge list: source -> task_name
+        sources_in_order: list[str] = []
+        sources_seen: set[str] = set()
+        targets: set[str] = set()
+
+        for task_name, task in self._tasks.items():
+            if not isinstance(task, tuple) or len(task) <= 1:
+                continue
+
+            targets.add(task_name)
+            for arg in task[1:]:
+                if not isinstance(arg, str):
+                    continue
+                if arg not in sources_seen:
+                    sources_seen.add(arg)
+                    sources_in_order.append(arg)
+
+        # Roots are sources that are never targets.
+        return [name for name in sources_in_order if name not in targets]
+
+    def leaves(self) -> list[str]:
+        """Alias for :meth:`leafs` (common English spelling)."""
+        return self.leafs()
 
     def leafs(self) -> list[str]:
         """Return the leaf nodes (outputs) of the workflow.
@@ -198,24 +198,27 @@ class Workflow:
         return [name for name in self._tasks if name not in has_followers]
 
     def external_inputs(self) -> list[str]:
-        """Return names that are referenced but not defined as tasks.
+        """Return undefined input names.
 
-        These are "dangling" references - task arguments that reference
-        names which don't exist in the workflow. These typically represent
-        inputs that need to be provided before the workflow can execute.
+        These are roots that are referenced by processing tasks but have not
+        been provided as tasks (typically via ``workflow.set(name, data)``).
 
         Returns
         -------
         list[str]
             List of names referenced but not defined.
 
-        Notes
-        -----
-        This is equivalent to `roots()`. The method is provided for
-        semantic clarity in contexts where "external inputs" is clearer
-        than "roots".
         """
-        return self.roots()
+        # Preserve the stable ordering of roots().
+        return [name for name in self.roots() if name not in self._tasks]
+
+    def tasks(self) -> list[str]:
+        """Return names of processing tasks (excluding raw data tasks)."""
+        return [
+            name
+            for name, task in self._tasks.items()
+            if isinstance(task, tuple) and len(task) > 0
+        ]
 
     def root_functions(self) -> dict[str, tuple]:
         """Return the functions that operate directly on root inputs.

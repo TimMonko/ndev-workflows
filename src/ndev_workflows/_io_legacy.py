@@ -91,7 +91,7 @@ def is_legacy_format(filename: str | Path) -> bool:
     bool
         True if the file uses legacy !!python/object format.
     """
-    with open(filename) as f:
+    with open(filename, encoding='utf-8', errors='replace') as f:
         first_line = f.readline()
     return '!!python/object:napari_workflows' in first_line
 
@@ -141,6 +141,41 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
         workflow._tasks = mapping.get('_tasks', {})
         return workflow
 
+    def construct_functools_partial(loader, node):
+        """Construct a FunctionReference from legacy functools.partial tags.
+
+        Legacy napari-workflows YAML may encode keyword arguments as
+        ``!!python/object/apply:functools.partial``.
+
+        We keep this loader *lazy* by returning a FunctionReference and storing
+        the keyword arguments on it.
+        """
+        seq = loader.construct_sequence(node, deep=True)
+        if not seq:
+            return None
+
+        func = seq[0]
+
+        # Common encodings:
+        #   [func, args_tuple_or_list, kwargs_dict]
+        #   [func, kwargs_dict]
+        kwargs = {}
+        if len(seq) >= 3 and isinstance(seq[2], dict):
+            kwargs = seq[2]
+        elif len(seq) == 2 and isinstance(seq[1], dict):
+            kwargs = seq[1]
+
+        if isinstance(func, FunctionReference):
+            func.kwargs = dict(kwargs)
+            return func
+
+        # Fallback: if we somehow got a real callable, keep it callable.
+        # This is still safe because SafeLoader will not construct arbitrary
+        # callables unless we registered constructors for them.
+        if kwargs and callable(func):
+            return partial(func, **kwargs)
+        return func
+
     LazyLoader.add_constructor(
         'tag:yaml.org,2002:python/tuple', construct_python_tuple
     )
@@ -150,6 +185,10 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
     LazyLoader.add_constructor(
         'tag:yaml.org,2002:python/object:napari_workflows._workflow.Workflow',
         construct_legacy_workflow,
+    )
+    LazyLoader.add_constructor(
+        'tag:yaml.org,2002:python/object/apply:functools.partial',
+        construct_functools_partial,
     )
 
     with open(filename, 'rb') as stream:
