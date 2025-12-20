@@ -7,6 +7,10 @@ repos:
       - id: trailing-whitespace
         exclude: ^\.napari-hub/.*
       - id: check-yaml # checks for correct yaml syntax for github actions ex.
+        exclude: |
+          (?x)(
+            |^tests/resources/Workflow/workflows/.*\.yaml$
+          )
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.10
     hooks:
