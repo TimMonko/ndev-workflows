@@ -9,7 +9,9 @@ import pytest
 
 from ndev_workflows import (
     Workflow,
+    WorkflowNotRunnableError,
     WorkflowYAMLError,
+    ensure_runnable,
     get_workflow_metadata,
     load_workflow,
     save_workflow,
@@ -281,7 +283,7 @@ class TestLegacyFormatLoading:
         """Test that legacy format correctly identifies leafs."""
         workflow = load_workflow(legacy_workflow_path)
 
-        leafs = workflow.leafs()
+        leafs = workflow.leaves()
         assert 'labels' in leafs
 
     def test_legacy_format_executes(self, legacy_workflow_path: Path):
@@ -301,11 +303,45 @@ class TestLegacyFormatLoading:
         """Test lazy loading doesn't import functions."""
         workflow = load_workflow(legacy_workflow_path, lazy=True)
 
-        # Should have FunctionReference placeholders
-        from ndev_workflows import FunctionReference
+        # Should have CallableRef placeholders
+        from ndev_workflows._spec import CallableRef
 
         task = workflow._tasks['blurred']
-        assert isinstance(task[0], FunctionReference)
+        assert isinstance(task[0], CallableRef)
+
+
+def test_ensure_runnable_from_spec_executes():
+    spec = {
+        'name': 'sqrt test',
+        'inputs': ['x'],
+        'outputs': ['y'],
+        'tasks': {
+            'y': {
+                'function': 'math.sqrt',
+                'params': {'arg0': 'x'},
+            }
+        },
+    }
+
+    w = ensure_runnable(spec)
+    w.set('x', 9.0)
+    assert w.get('y') == 3.0
+
+
+def test_ensure_runnable_reports_missing_callable():
+    spec = {
+        'inputs': ['x'],
+        'outputs': ['y'],
+        'tasks': {
+            'y': {
+                'function': 'nonexistent.module.fake_function',
+                'params': {'arg0': 'x'},
+            }
+        },
+    }
+
+    with pytest.raises(WorkflowNotRunnableError, match='Cannot import'):
+        ensure_runnable(spec)
 
     def test_legacy_metadata(self, legacy_workflow_path: Path):
         """Test getting metadata from legacy format."""

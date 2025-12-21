@@ -12,9 +12,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
-
-from dask.threaded import get as dask_get
 
 if TYPE_CHECKING:
     pass
@@ -81,7 +80,7 @@ class Workflow:
         (not as a tuple). This is compatible with dask's task graph format.
 
         When storing a callable, the task format is:
-        ``(partial(func, **defaults_and_kwargs), *args)``
+        ``(func_or_partial, *args)``
         """
         if not callable(func_or_data):
             # Raw data - store directly (dask-compatible)
@@ -96,6 +95,16 @@ class Workflow:
 
         # Store as dask-compatible task tuple
         self._tasks[name] = (func, *args)
+
+    @property
+    def tasks(self):
+        """Read-only view of the underlying dask task graph.
+
+        This is the public accessor for the workflow's task graph. The
+        underlying storage is ``self._tasks`` for dask-graph compatibility.
+        Prefer this property over accessing ``_tasks`` directly.
+        """
+        return MappingProxyType(self._tasks)
 
     def get(self, name: str | list[str]) -> Any:
         """Execute the workflow graph and return the result for task(s).
@@ -121,6 +130,8 @@ class Workflow:
         This uses dask's threaded scheduler to execute the task graph,
         automatically resolving dependencies.
         """
+        from dask.threaded import get as dask_get
+
         if isinstance(name, list):
             for n in name:
                 if n not in self._tasks:
@@ -171,10 +182,6 @@ class Workflow:
         return [name for name in sources_in_order if name not in targets]
 
     def leaves(self) -> list[str]:
-        """Alias for :meth:`leafs` (common English spelling)."""
-        return self.leafs()
-
-    def leafs(self) -> list[str]:
         """Return the leaf nodes (outputs) of the workflow.
 
         Leaves are tasks that do not have any followers - nothing
@@ -197,7 +204,11 @@ class Workflow:
         # Leaves are tasks with no followers
         return [name for name in self._tasks if name not in has_followers]
 
-    def external_inputs(self) -> list[str]:
+    def leafs(self) -> list[str]:
+        """Alias for :meth:`leaves` (napari-workflows spelling)."""
+        return self.leaves()
+
+    def get_undefined_inputs(self) -> list[str]:
         """Return undefined input names.
 
         These are roots that are referenced by processing tasks but have not
@@ -212,7 +223,7 @@ class Workflow:
         # Preserve the stable ordering of roots().
         return [name for name in self.roots() if name not in self._tasks]
 
-    def tasks(self) -> list[str]:
+    def processing_task_names(self) -> list[str]:
         """Return names of processing tasks (excluding raw data tasks)."""
         return [
             name
@@ -333,7 +344,7 @@ class Workflow:
         """Return a string representation of the workflow."""
         n_tasks = len(self._tasks)
         roots = self.roots()
-        leafs = self.leafs()
+        leafs = self.leaves()
         return f'Workflow({n_tasks} tasks, roots={roots}, leafs={leafs})'
 
     def copy(self) -> Workflow:
@@ -433,19 +444,3 @@ class Workflow:
             return True
         # If it's a tuple with a callable first element, it's a processing task
         return not callable(task[0])
-
-
-def copy_workflow_state(workflow: Workflow) -> Workflow:
-    """Create a copy of a workflow for undo/redo purposes.
-
-    Parameters
-    ----------
-    workflow : Workflow
-        The workflow to copy.
-
-    Returns
-    -------
-    Workflow
-        A deep copy of the workflow.
-    """
-    return workflow.copy()

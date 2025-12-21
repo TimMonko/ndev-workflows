@@ -8,74 +8,13 @@ For new workflows, use the functions in `_io.py` which use a plain YAML format.
 
 from __future__ import annotations
 
-import importlib
 from functools import partial
 from pathlib import Path
 
 import yaml
 
+from ._spec import CallableRef
 from ._workflow import Workflow
-
-
-class FunctionReference:
-    """Placeholder for a function that hasn't been imported yet.
-
-    Used during workflow loading when the function's module
-    isn't installed or we want to avoid importing it.
-
-    Parameters
-    ----------
-    module : str
-        The module path (e.g., 'skimage.filters').
-    name : str
-        The function name (e.g., 'gaussian').
-
-    Attributes
-    ----------
-    module : str
-        The module path.
-    name : str
-        The function name.
-    kwargs : dict
-        Keyword arguments to be passed to the function (from partial).
-    """
-
-    def __init__(self, module: str, name: str):
-        self.module = module
-        self.name = name
-        self.kwargs: dict = {}
-
-    def __repr__(self) -> str:
-        if self.kwargs:
-            return f'FunctionReference({self.module}.{self.name}, kwargs={self.kwargs})'
-        return f'FunctionReference({self.module}.{self.name})'
-
-    def __call__(self, *args, **kwargs):
-        raise NotImplementedError(
-            f'Cannot call {self.module}.{self.name} - function not resolved. '
-            f'Use func_ref.resolve() to import, or install the required module.'
-        )
-
-    def resolve(self):
-        """Attempt to import and return the actual function.
-
-        Returns
-        -------
-        callable
-            The imported function, wrapped in partial if kwargs present.
-
-        Raises
-        ------
-        ImportError
-            If the module cannot be imported.
-        AttributeError
-            If the function doesn't exist in the module.
-        """
-        module = importlib.import_module(self.module)
-        func = getattr(module, self.name)
-        if self.kwargs:
-            return partial(func, **self.kwargs)
-        return func
 
 
 def is_legacy_format(filename: str | Path) -> bool:
@@ -110,7 +49,7 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
     Returns
     -------
     Workflow
-        The loaded workflow with FunctionReference placeholders.
+        The loaded workflow with CallableRef placeholders.
 
     Notes
     -----
@@ -125,7 +64,7 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
         return tuple(loader.construct_sequence(node))
 
     def construct_python_name(loader, suffix, node):
-        """Return a FunctionReference instead of importing."""
+        """Return a CallableRef instead of importing."""
         # suffix is like 'skimage.filters.gaussian'
         parts = suffix.rsplit('.', 1)
         if len(parts) == 2:
@@ -133,7 +72,7 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
         else:
             module = ''
             name = suffix
-        return FunctionReference(module, name)
+        return CallableRef(module, name)
 
     def construct_legacy_workflow(loader, node):
         mapping = loader.construct_mapping(node, deep=True)
@@ -142,12 +81,12 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
         return workflow
 
     def construct_functools_partial(loader, node):
-        """Construct a FunctionReference from legacy functools.partial tags.
+        """Construct a CallableRef from legacy functools.partial tags.
 
         Legacy napari-workflows YAML may encode keyword arguments as
         ``!!python/object/apply:functools.partial``.
 
-        We keep this loader *lazy* by returning a FunctionReference and storing
+        We keep this loader *lazy* by returning a CallableRef and storing
         the keyword arguments on it.
         """
         seq = loader.construct_sequence(node, deep=True)
@@ -165,7 +104,7 @@ def load_legacy_lazy(filename: str | Path) -> Workflow:
         elif len(seq) == 2 and isinstance(seq[1], dict):
             kwargs = seq[1]
 
-        if isinstance(func, FunctionReference):
+        if isinstance(func, CallableRef):
             func.kwargs = dict(kwargs)
             return func
 

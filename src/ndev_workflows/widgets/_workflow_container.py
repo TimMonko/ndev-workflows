@@ -95,7 +95,7 @@ def process_workflow_file(
 
     img = nImage(image_file)
 
-    # Capture roots before modifying workflow (setting data removes them from roots)
+    # Capture roots before modifying workflow (stable list of graph inputs)
     root_names = workflow.roots()
 
     root_stack = []

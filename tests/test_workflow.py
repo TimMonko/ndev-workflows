@@ -100,13 +100,13 @@ class TestWorkflowGraphOperations:
 
     def test_leafs_single_output(self, simple_workflow: Workflow):
         """Test leafs() with single output."""
-        leafs = simple_workflow.leafs()
+        leafs = simple_workflow.leaves()
         assert 'output' in leafs
         assert len(leafs) == 1
 
     def test_leafs_multiple_outputs(self, branching_workflow: Workflow):
         """Test leafs() with multiple outputs."""
-        leafs = branching_workflow.leafs()
+        leafs = branching_workflow.leaves()
         # blurred_2 and binary are both leafs (nothing depends on them)
         assert 'blurred_2' in leafs
         assert 'binary' in leafs
@@ -135,7 +135,7 @@ class TestWorkflowGraphOperations:
         self, simple_workflow: Workflow
     ):
         """Test external_inputs() returns empty for complete workflow."""
-        external = simple_workflow.external_inputs()
+        external = simple_workflow.get_undefined_inputs()
         assert external == []
 
     def test_external_inputs_finds_missing(self, sample_image: np.ndarray):
@@ -148,7 +148,7 @@ class TestWorkflowGraphOperations:
         # Create a task that references 'missing_input' which doesn't exist
         w.set('result', process, 'missing_input')
 
-        external = w.external_inputs()
+        external = w.get_undefined_inputs()
         assert 'missing_input' in external
         assert len(external) == 1
 

@@ -89,7 +89,7 @@ def test_workflow_container_get_workflow_info():
     assert len(container._viewer_roots_container) == len(
         container.workflow.roots()
     )
-    assert container._tasks_select.value == list(container.workflow.leafs())
+    assert container._tasks_select.value == list(container.workflow.leaves())
     assert list(container._tasks_select.choices) == list(
         container.workflow._tasks.keys()
     )

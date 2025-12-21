@@ -60,9 +60,11 @@ except ImportError:
 # ndevio dependency issues when ndevio is installed from PyPI
 from typing import TYPE_CHECKING
 
+# Runnable checks / resolution
+from ._ensure import WorkflowNotRunnableError, ensure_runnable
+
 # I/O functions
 from ._io import (
-    FunctionReference,
     WorkflowYAMLError,
     get_workflow_metadata,
     is_legacy_format,
@@ -75,8 +77,8 @@ from ._io import (
 from ._manager import WorkflowManager
 
 # Undo/redo functionality
-from ._undo_redo import UndoRedoController
-from ._workflow import Workflow, copy_workflow_state
+from ._undo_redo import UndoRedoController, copy_workflow_state
+from ._workflow import Workflow
 
 if TYPE_CHECKING:
     from .widgets._workflow_container import (
@@ -112,9 +114,10 @@ __all__ = (
     'get_workflow_metadata',
     'migrate_legacy',
     'is_legacy_format',
-    # Utilities
-    'FunctionReference',
     'WorkflowYAMLError',
+    # Runnable checks / resolution
+    'ensure_runnable',
+    'WorkflowNotRunnableError',
     # Widgets and batch processing
     'WorkflowContainer',
     'process_workflow_file',
