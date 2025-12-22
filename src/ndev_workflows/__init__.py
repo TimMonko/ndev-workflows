@@ -58,9 +58,6 @@ except ImportError:
 # ndevio dependency issues when ndevio is installed from PyPI
 from typing import TYPE_CHECKING
 
-# Batch file processing functionality
-from ._batch import process_workflow_file
-
 # I/O functions
 from ._io import (
     WorkflowYAMLError,
@@ -70,28 +67,44 @@ from ._io import (
     save_workflow,
 )
 
-# Workflow manager for napari integration
-from ._manager import WorkflowManager
-
 # Runnable checks / resolution
 from ._spec import ensure_runnable
-
-# Undo/redo functionality
-from ._undo_redo import UndoRedoController, copy_workflow_state
 from ._workflow import Workflow, WorkflowNotRunnableError
 
 if TYPE_CHECKING:
-    from .widgets._workflow_container import (
-        WorkflowContainer,
-    )
+    from ._batch import process_workflow_file
+    from ._manager import WorkflowManager
+    from ._undo_redo import UndoRedoController, copy_workflow_state
+    from .widgets._workflow_container import WorkflowContainer
 
 
 def __getattr__(name: str):
-    """Lazily import WorkflowContainer to speed up package import."""
+    """Lazily import heavier napari-facing modules.
+
+    This keeps importing ``ndev_workflows`` fast in napari, while still
+    allowing convenient access to UI/batch/manager helpers from the
+    package root.
+    """
     if name == 'WorkflowContainer':
         from .widgets._workflow_container import WorkflowContainer
 
         return WorkflowContainer
+    if name == 'process_workflow_file':
+        from ._batch import process_workflow_file
+
+        return process_workflow_file
+    if name == 'WorkflowManager':
+        from ._manager import WorkflowManager
+
+        return WorkflowManager
+    if name == 'UndoRedoController':
+        from ._undo_redo import UndoRedoController
+
+        return UndoRedoController
+    if name == 'copy_workflow_state':
+        from ._undo_redo import copy_workflow_state
+
+        return copy_workflow_state
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 

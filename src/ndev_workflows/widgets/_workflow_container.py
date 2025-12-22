@@ -22,12 +22,13 @@ from magicgui.widgets import (
 )
 from ndevio import helpers
 
-from ndev_workflows import (
-    WorkflowNotRunnableError,
-    ensure_runnable,
-    load_workflow,
-    process_workflow_file,
-)
+# Avoid importing the ndev_workflows package root here.
+# The package __init__ pulls in additional modules (manager/undo-redo/etc.)
+# which can noticeably slow down napari widget instantiation.
+from .._batch import process_workflow_file
+from .._io import load_workflow
+from .._spec import ensure_runnable
+from .._workflow import WorkflowNotRunnableError
 
 if TYPE_CHECKING:
     import napari
