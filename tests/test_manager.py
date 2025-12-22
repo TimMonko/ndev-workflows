@@ -308,7 +308,7 @@ class TestWorkflowManagerWithNapari:
         data = np.random.randint(0, 255, (64, 64), dtype=np.uint8)
 
         # Add a layer directly to viewer
-        _layer = napari_manager.viewer.add_image(data, name='input')
+        napari_manager.viewer.add_image(data, name='input')
 
         # Add the data to workflow
         napari_manager.workflow.set('input', data)

@@ -347,10 +347,11 @@ def test_workflow_method_ensure_runnable_resolves_callable_ref():
     w.set('x', 16.0)
     assert w.get('y') == 4.0
 
-    def test_legacy_metadata(self, legacy_workflow_path: Path):
-        """Test getting metadata from legacy format."""
-        metadata = load_workflow(legacy_workflow_path, lazy=True).metadata
 
-        assert metadata['legacy'] is True
-        assert 'image' in metadata['inputs']
-        assert 'labels' in metadata['outputs']
+def test_legacy_metadata(self, legacy_workflow_path: Path):
+    """Test getting metadata from legacy format."""
+    metadata = load_workflow(legacy_workflow_path, lazy=True).metadata
+
+    assert metadata['legacy'] is True
+    assert 'image' in metadata['inputs']
+    assert 'labels' in metadata['outputs']
