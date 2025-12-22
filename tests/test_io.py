@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -242,13 +243,14 @@ class TestPathTypes:
         assert 'y' in loaded
 
 
+@pytest.fixture
+def legacy_workflow_path() -> Path:
+    """Path to legacy format test file."""
+    return Path('tests/resources/Workflow/workflows/legacy_simple.yaml')
+
+
 class TestLegacyFormatLoading:
     """Test loading legacy napari-workflows format."""
-
-    @pytest.fixture
-    def legacy_workflow_path(self) -> Path:
-        """Path to legacy format test file."""
-        return Path('tests/resources/Workflow/workflows/legacy_simple.yaml')
 
     def test_load_legacy_format(self, legacy_workflow_path: Path):
         """Test that legacy format is detected and loaded."""
@@ -303,6 +305,22 @@ class TestLegacyFormatLoading:
         task = workflow._tasks['blurred']
         assert isinstance(task[0], CallableRef)
 
+    def test_legacy_metadata(self, legacy_workflow_path: Path):
+        """Test getting metadata from legacy format."""
+        metadata_obj = load_workflow(legacy_workflow_path, lazy=True).metadata
+        assert isinstance(metadata_obj, dict)
+        metadata: dict[str, Any] = metadata_obj
+
+        assert metadata['legacy'] is True
+
+        inputs = metadata.get('inputs')
+        outputs = metadata.get('outputs')
+        assert isinstance(inputs, list)
+        assert isinstance(outputs, list)
+
+        assert 'image' in inputs
+        assert 'labels' in outputs
+
 
 def test_ensure_runnable_from_spec_executes():
     spec = {
@@ -346,12 +364,3 @@ def test_workflow_method_ensure_runnable_resolves_callable_ref():
     w.ensure_runnable()
     w.set('x', 16.0)
     assert w.get('y') == 4.0
-
-
-def test_legacy_metadata(self, legacy_workflow_path: Path):
-    """Test getting metadata from legacy format."""
-    metadata = load_workflow(legacy_workflow_path, lazy=True).metadata
-
-    assert metadata['legacy'] is True
-    assert 'image' in metadata['inputs']
-    assert 'labels' in metadata['outputs']
