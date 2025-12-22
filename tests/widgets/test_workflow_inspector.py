@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import pytest
 
+from ndev_workflows.widgets._workflow_inspector import (
+    HAS_MATPLOTLIB,
+    WorkflowInspector,
+)
+
 
 class TestWorkflowInspector:
     """Core WorkflowInspector widget tests."""
@@ -14,13 +19,6 @@ class TestWorkflowInspector:
     @pytest.fixture
     def inspector(self, make_napari_viewer, qtbot):
         """Create a WorkflowInspector widget."""
-        pytest.importorskip('matplotlib')
-        pytest.importorskip('networkx')
-
-        from ndev_workflows.widgets._workflow_inspector import (
-            WorkflowInspector,
-        )
-
         viewer = make_napari_viewer()
         widget = WorkflowInspector(viewer)
         qtbot.addWidget(widget)
@@ -96,6 +94,7 @@ class TestWorkflowInspector:
         assert inspector._use_live_mode is True
         assert inspector._loaded_workflow is None
 
+    @pytest.mark.skipif(not HAS_MATPLOTLIB, reason='requires matplotlib')
     def test_graph_updates_on_workflow_load(self, inspector, tmp_path):
         """Test that graph is drawn when workflow is loaded."""
         from ndev_workflows import Workflow, save_workflow
@@ -210,13 +209,13 @@ class TestManagerStatusMethods:
         assert 'modified' not in manager.pending_updates
 
 
+@pytest.mark.skipif(not HAS_MATPLOTLIB, reason='requires matplotlib')
 class TestDraggableNodes:
-    """Test DraggableNodes interaction handling."""
+    """Test DraggableNodes interaction handling (requires matplotlib)."""
 
     @pytest.fixture
     def draggable_nodes(self):
         """Create DraggableNodes with real MplCanvas."""
-        pytest.importorskip('matplotlib')
         from unittest.mock import MagicMock
 
         from ndev_workflows.widgets._workflow_inspector import (
@@ -272,7 +271,6 @@ class TestDraggableNodes:
 
     def test_select_node_with_viewer(self, make_napari_viewer):
         """Test clicking a node selects the layer in viewer."""
-        pytest.importorskip('matplotlib')
         import numpy as np
 
         from ndev_workflows.widgets._workflow_inspector import (
