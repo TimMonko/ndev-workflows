@@ -60,6 +60,9 @@ except ImportError:
 # ndevio dependency issues when ndevio is installed from PyPI
 from typing import TYPE_CHECKING
 
+# Batch file processing functionality
+from ._batch import process_workflow_file
+
 # I/O functions
 from ._io import (
     WorkflowYAMLError,
@@ -83,7 +86,6 @@ from ._workflow import Workflow, WorkflowNotRunnableError
 if TYPE_CHECKING:
     from .widgets._workflow_container import (
         WorkflowContainer,
-        process_workflow_file,
     )
 
 
@@ -93,10 +95,6 @@ def __getattr__(name: str):
         from .widgets._workflow_container import WorkflowContainer
 
         return WorkflowContainer
-    if name == 'process_workflow_file':
-        from .widgets._workflow_container import process_workflow_file
-
-        return process_workflow_file
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 

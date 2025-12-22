@@ -3,20 +3,12 @@
 This module provides a Container widget for managing napari-workflows in both
 interactive (viewer) and batch processing modes. It integrates with nbatch
 for parallel execution of workflows on multiple files.
-
-Example
--------
->>> from ndev_workflows import WorkflowContainer
->>> container = WorkflowContainer(viewer)
->>> viewer.window.add_dock_widget(container)
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
 from magicclass.widgets import TabbedContainer
 from magicgui.widgets import (
     CheckBox,
@@ -28,7 +20,6 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from nbatch import batch
 from ndevio import helpers
 
 from ndev_workflows import (
@@ -36,118 +27,11 @@ from ndev_workflows import (
     ensure_runnable,
     get_workflow_metadata,
     load_workflow,
+    process_workflow_file,
 )
 
 if TYPE_CHECKING:
     import napari
-
-
-@batch(on_error='continue')
-def process_workflow_file(
-    image_file: Path,
-    result_dir: Path,
-    workflow_file: Path,
-    root_index_list: list[int],
-    task_names: list[str],
-    keep_original_images: bool,
-    root_list: list[str],
-    squeezed_img_dims: str,
-) -> Path:
-    """Process a single image file through a napari-workflow.
-
-    This function loads the workflow fresh for each file to ensure thread
-    safety when running in parallel. It has no widget dependencies.
-
-    Parameters
-    ----------
-    image_file : Path
-        Path to the image file to process.
-    result_dir : Path
-        Directory to save results.
-    workflow_file : Path
-        Path to the workflow YAML file. A fresh workflow is loaded for each
-        file to ensure thread safety.
-    root_index_list : list[int]
-        Indices of channels to use as workflow roots.
-    task_names : list[str]
-        Names of workflow tasks to execute.
-    keep_original_images : bool
-        Whether to concatenate original images with results.
-    root_list : list[str]
-        Names of root channels (for output naming).
-    squeezed_img_dims : str
-        Squeezed dimension order of the image.
-
-    Returns
-    -------
-    Path
-        Path to the saved output file.
-
-    """
-    import dask.array as da
-    from bioio.writers import OmeTiffWriter
-    from bioio_base import transforms
-    from ndevio import nImage
-
-    from ndev_workflows import load_workflow
-
-    # Load fresh workflow instance for thread safety
-    # load_workflow handles both legacy and new formats
-    workflow = load_workflow(str(workflow_file), lazy=True)
-    workflow = ensure_runnable(workflow)
-
-    img = nImage(image_file)
-
-    # Capture roots before modifying workflow (stable list of graph inputs)
-    root_names = workflow.roots()
-
-    root_stack = []
-    # get image corresponding to each root, and set it to the workflow
-    for idx, root_index in enumerate(root_index_list):
-        if 'S' in img.dims.order:
-            root_img = img.get_image_data('TSZYX', S=root_index)
-        else:
-            root_img = img.get_image_data('TCZYX', C=root_index)
-        # stack the TCZYX images for later stacking with results
-        root_stack.append(root_img)
-        # squeeze the root image for workflow
-        root_squeeze = np.squeeze(root_img)
-        # set the root image to the index of the root in the workflow
-        workflow.set(name=root_names[idx], func_or_data=root_squeeze)
-
-    result = workflow.get(name=task_names)
-
-    result_stack = np.asarray(
-        result
-    )  # cle.pull stacks the results on the 0th axis as "C"
-    # transform result_stack to TCZYX
-    result_stack = transforms.reshape_data(
-        data=result_stack,
-        given_dims='C' + squeezed_img_dims,
-        return_dims='TCZYX',
-    )
-
-    if result_stack.dtype == np.int64:
-        result_stack = result_stack.astype(np.int32)
-
-    if keep_original_images:
-        dask_images = da.concatenate(root_stack, axis=1)  # along "C"
-        result_stack = da.concatenate([dask_images, result_stack], axis=1)
-        result_names = root_list + task_names
-    else:
-        result_names = task_names
-
-    output_path = result_dir / (image_file.stem + '.tiff')
-    OmeTiffWriter.save(
-        data=result_stack,
-        uri=output_path,
-        dim_order='TCZYX',
-        channel_names=result_names,
-        image_name=image_file.stem,
-        physical_pixel_sizes=img.physical_pixel_sizes,
-    )
-
-    return output_path
 
 
 class WorkflowContainer(Container):
