@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from magicclass.widgets import TabbedContainer
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
@@ -20,15 +19,6 @@ from magicgui.widgets import (
     PushButton,
     Select,
 )
-from ndevio import helpers
-
-# Avoid importing the ndev_workflows package root here.
-# The package __init__ pulls in additional modules (manager/undo-redo/etc.)
-# which can noticeably slow down napari widget instantiation.
-from .._batch import process_workflow_file
-from .._io import load_workflow
-from .._spec import ensure_runnable
-from .._workflow import WorkflowNotRunnableError
 
 if TYPE_CHECKING:
     import napari
@@ -192,6 +182,8 @@ class WorkflowContainer(Container):
 
     def _init_layout(self):
         """Initialize the layout of the widgets."""
+        from magicclass.widgets import TabbedContainer
+
         self.extend(
             [
                 self.workflow_file,
@@ -229,7 +221,7 @@ class WorkflowContainer(Container):
 
     def _get_image_info(self):
         """Get channels and dims from first image in the directory."""
-        from ndevio import nImage
+        from ndevio import helpers, nImage
 
         self.image_dir, self.image_files = helpers.get_directory_and_files(
             self.image_directory.value,
@@ -252,6 +244,8 @@ class WorkflowContainer(Container):
 
     def _update_roots(self):
         """Get the roots from the workflow and update the ComboBox widgets."""
+        from ndevio import helpers
+
         self._batch_roots_container.clear()
         self._viewer_roots_container.clear()
 
@@ -300,6 +294,8 @@ class WorkflowContainer(Container):
 
         Uses the loaded Workflow's metadata for fast preview.
         """
+        from .._io import load_workflow
+
         workflow_path = self.workflow_file.value
 
         # Load workflow lazily so missing optional deps don't break the UI.
@@ -326,6 +322,8 @@ class WorkflowContainer(Container):
 
         Used for v3 format metadata preview.
         """
+        from ndevio import helpers
+
         self._batch_roots_container.clear()
         self._viewer_roots_container.clear()
 
@@ -387,6 +385,8 @@ class WorkflowContainer(Container):
 
     def batch_workflow(self):
         """Run the workflow on all images in the image directory."""
+        from .._batch import process_workflow_file
+
         result_dir = self.result_directory.value
         image_files = self.image_files
 
@@ -417,6 +417,10 @@ class WorkflowContainer(Container):
 
     def viewer_workflow(self):
         """Run the workflow on the viewer layers."""
+        from .._io import load_workflow
+        from .._spec import ensure_runnable
+        from .._workflow import WorkflowNotRunnableError
+
         # Reload workflow for fresh state (previous run may have set data)
         workflow = load_workflow(self.workflow_file.value, lazy=True)
 

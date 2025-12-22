@@ -53,23 +53,7 @@ try:
 except ImportError:
     __version__ = 'unknown'
 
-# Core workflow class
-# Workflow container widget and batch function - lazy import to avoid
-# ndevio dependency issues when ndevio is installed from PyPI
 from typing import TYPE_CHECKING
-
-# I/O functions
-from ._io import (
-    WorkflowYAMLError,
-    is_legacy_format,
-    load_workflow,
-    migrate_legacy,
-    save_workflow,
-)
-
-# Runnable checks / resolution
-from ._spec import ensure_runnable
-from ._workflow import Workflow, WorkflowNotRunnableError
 
 if TYPE_CHECKING:
     from ._batch import process_workflow_file
@@ -89,6 +73,27 @@ def __getattr__(name: str):
         from .widgets._workflow_container import WorkflowContainer
 
         return WorkflowContainer
+    if name in {
+        'Workflow',
+        'WorkflowNotRunnableError',
+    }:
+        from . import _workflow
+
+        return getattr(_workflow, name)
+    if name in {
+        'save_workflow',
+        'load_workflow',
+        'migrate_legacy',
+        'is_legacy_format',
+        'WorkflowYAMLError',
+    }:
+        from . import _io
+
+        return getattr(_io, name)
+    if name == 'ensure_runnable':
+        from ._spec import ensure_runnable
+
+        return ensure_runnable
     if name == 'process_workflow_file':
         from ._batch import process_workflow_file
 
