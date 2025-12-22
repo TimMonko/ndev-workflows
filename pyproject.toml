@@ -36,12 +36,15 @@ dependencies = [
     "numpy",
     "dask",
     "pyyaml",
+    "networkx",  # also a transitive dependency of scikit-image, from napari
 ]
 
 [project.optional-dependencies]
 # Allow easily installation with the full, default napari installation
 # (including Qt backend) using ndev-workflows[all].
 all = ["napari[all]"]
+# Optional visualization dependencies for the workflow inspector graph view
+plot = ["matplotlib"]
 
 [dependency-groups]
 dev = [

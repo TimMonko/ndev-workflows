@@ -32,6 +32,18 @@ if TYPE_CHECKING:
     import napari.viewer
 
 
+def _check_matplotlib():
+    """Check if matplotlib is available."""
+    try:
+        import matplotlib  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+HAS_MATPLOTLIB = _check_matplotlib()
+
+
 class MplCanvas:
     """Matplotlib canvas for embedding in Qt widgets.
 
@@ -334,9 +346,18 @@ class WorkflowInspector(QWidget):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        # Graph tab
-        self.graph_widget = MatplotlibWidget()
-        self.tabs.addTab(self.graph_widget, 'Graph')
+        # Graph tab (requires matplotlib)
+        if HAS_MATPLOTLIB:
+            self.graph_widget = MatplotlibWidget()
+            self.tabs.addTab(self.graph_widget, 'Graph')
+        else:
+            self.graph_widget = None
+            no_mpl_label = QLabel(
+                'Graph view requires matplotlib.\n\n'
+                'Install with: pip install ndev-workflows[plot]'
+            )
+            no_mpl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.tabs.addTab(no_mpl_label, 'Graph')
 
         # From Roots tab
         self.roots_scroll = QScrollArea()
@@ -522,8 +543,9 @@ class WorkflowInspector(QWidget):
             self.lbl_from_leaves.setText('No workflow loaded or empty workflow')
             self.lbl_raw.setText('No workflow loaded or empty workflow')
             self.lbl_info.setText('Load a YAML file or enable live mode')
-            self.graph_widget.canvas.clear()
-            self.graph_widget.canvas.draw()
+            if self.graph_widget is not None:
+                self.graph_widget.canvas.clear()
+                self.graph_widget.canvas.draw()
             return
 
         # Update tree views
@@ -549,7 +571,10 @@ class WorkflowInspector(QWidget):
         info_text = self._build_info_text(workflow)
         self.lbl_info.setText(info_text)
 
-        # Update graph
+        # Update graph (only if matplotlib available)
+        if self.graph_widget is None:
+            return
+
         new_graph = self._create_nx_graph(workflow)
         if self._graph is None or self._graph_changed(new_graph):
             self._graph = new_graph
