@@ -29,8 +29,8 @@ requires-python = ">=3.11"  # ndevio requires 3.11+
 # See best practices: https://napari.org/stable/plugins/building_a_plugin/best_practices.html
 dependencies = [
     "napari",
-    "nbatch",
-    "ndevio",
+    "nbatch>=0.0.4",
+    "ndevio>=0.6.0",
     "magicgui",
     "magic-class",
     "numpy",
