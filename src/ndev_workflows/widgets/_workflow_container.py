@@ -286,7 +286,7 @@ class WorkflowContainer(Container):
             self._tasks_select.choices = tasks
             self._tasks_select.value = leafs if leafs else tasks[-1:]
         elif workflow is not None:
-            self._tasks_select.choices = workflow.tasks()
+            self._tasks_select.choices = workflow.processing_task_names()
             self._tasks_select.value = workflow.leafs()
 
     def _get_workflow_info(self):
