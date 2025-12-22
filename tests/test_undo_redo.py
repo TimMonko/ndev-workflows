@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ndev_workflows import UndoRedoController, Workflow
+from ndev_workflows import Workflow
+from ndev_workflows._undo_redo import UndoRedoController
 
 
 def add_value(x, value=10):

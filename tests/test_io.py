@@ -7,14 +7,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ndev_workflows import (
-    Workflow,
-    WorkflowNotRunnableError,
-    WorkflowYAMLError,
-    ensure_runnable,
-    load_workflow,
-    save_workflow,
-)
+from ndev_workflows import Workflow, load_workflow, save_workflow
+from ndev_workflows._io import WorkflowYAMLError
+from ndev_workflows._spec import ensure_runnable
+from ndev_workflows._workflow import WorkflowNotRunnableError
 
 
 # Define helper functions at module level for import resolution

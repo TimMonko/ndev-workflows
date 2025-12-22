@@ -8,25 +8,6 @@ enhanced with:
 - Integration with ndev-settings and nbatch
 - npe2-native plugin architecture
 
-Key Components
---------------
-Workflow : class
-    Core dask-compatible workflow class for task graph management.
-WorkflowManager : class
-    Singleton manager for napari viewer integration with undo/redo.
-WorkflowContainer : Container widget
-    A magicgui Container for interactive workflow management with batch
-    processing support via nbatch.
-UndoRedoController : class
-    Undo/redo state management for workflows.
-
-I/O Functions
--------------
-save_workflow, load_workflow : functions
-    Human-readable YAML format (recommended).
-migrate_legacy : function
-    Convert legacy napari-workflows files to new format.
-
 Example
 -------
 >>> from ndev_workflows import Workflow, save_workflow, load_workflow
@@ -43,94 +24,18 @@ Attribution
 This package includes code derived from napari-workflows:
 https://github.com/haesleinhuepf/napari-workflows
 Copyright (c) 2021, Robert Haase - BSD 3-Clause License
-See NOTICE file for details.
 """
-
-from __future__ import annotations
 
 try:
     from ._version import version as __version__
 except ImportError:
     __version__ = 'unknown'
 
-from typing import TYPE_CHECKING
+from ._io import load_workflow, save_workflow
+from ._workflow import Workflow
 
-if TYPE_CHECKING:
-    from ._batch import process_workflow_file
-    from ._manager import WorkflowManager
-    from ._undo_redo import UndoRedoController, copy_workflow_state
-    from .widgets._workflow_container import WorkflowContainer
-
-
-def __getattr__(name: str):
-    """Lazily import heavier napari-facing modules.
-
-    This keeps importing ``ndev_workflows`` fast in napari, while still
-    allowing convenient access to UI/batch/manager helpers from the
-    package root.
-    """
-    if name == 'WorkflowContainer':
-        from .widgets._workflow_container import WorkflowContainer
-
-        return WorkflowContainer
-    if name in {
-        'Workflow',
-        'WorkflowNotRunnableError',
-    }:
-        from . import _workflow
-
-        return getattr(_workflow, name)
-    if name in {
-        'save_workflow',
-        'load_workflow',
-        'migrate_legacy',
-        'is_legacy_format',
-        'WorkflowYAMLError',
-    }:
-        from . import _io
-
-        return getattr(_io, name)
-    if name == 'ensure_runnable':
-        from ._spec import ensure_runnable
-
-        return ensure_runnable
-    if name == 'process_workflow_file':
-        from ._batch import process_workflow_file
-
-        return process_workflow_file
-    if name == 'WorkflowManager':
-        from ._manager import WorkflowManager
-
-        return WorkflowManager
-    if name == 'UndoRedoController':
-        from ._undo_redo import UndoRedoController
-
-        return UndoRedoController
-    if name == 'copy_workflow_state':
-        from ._undo_redo import copy_workflow_state
-
-        return copy_workflow_state
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
-
-
-__all__ = (
-    # Core workflow class
+__all__ = [
     'Workflow',
-    'copy_workflow_state',
-    # Workflow manager
-    'WorkflowManager',
-    # Undo/redo
-    'UndoRedoController',
-    # I/O functions
-    'save_workflow',
     'load_workflow',
-    'migrate_legacy',
-    'is_legacy_format',
-    'WorkflowYAMLError',
-    # Runnable checks / resolution
-    'ensure_runnable',
-    'WorkflowNotRunnableError',
-    # Widgets and batch processing
-    'WorkflowContainer',
-    'process_workflow_file',
-)
+    'save_workflow',
+]
