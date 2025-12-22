@@ -229,14 +229,31 @@ class DraggableNodes:
 
 
 class MatplotlibWidget(QWidget):
-    """Qt widget containing a matplotlib canvas."""
+    """Qt widget containing a matplotlib canvas with navigation toolbar.
+
+    Includes standard matplotlib navigation tools:
+    - Home: Reset to original view
+    - Back/Forward: Navigate view history
+    - Pan: Pan the view with mouse
+    - Zoom: Zoom to rectangle
+    - Configure: Adjust subplot parameters
+    - Save: Save the figure to file
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from matplotlib.backends.backend_qtagg import (
+            NavigationToolbar2QT as NavigationToolbar,
+        )
+
         self.canvas = MplCanvas()
+
+        # Create toolbar with navigation buttons
+        self.toolbar = NavigationToolbar(self.canvas.canvas, self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas.canvas)
 
 
