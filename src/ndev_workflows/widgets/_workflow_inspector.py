@@ -69,10 +69,11 @@ class MplCanvas:
         self.axes.set_facecolor('#262930')
 
 
-class ClickableNodes:
-    """Interactive nodes in the workflow graph.
+class DraggableNodes:
+    """Interactive draggable nodes in the workflow graph.
 
-    Allows clicking on nodes to select the corresponding layer in napari.
+    Allows clicking on nodes to select the corresponding layer in napari,
+    and dragging nodes to rearrange the graph layout.
     """
 
     # Colors for different node states
@@ -89,8 +90,9 @@ class ClickableNodes:
         canvas: MplCanvas,
         positions: dict,
         viewer: napari.viewer.Viewer | None = None,
+        on_positions_changed: Callable | None = None,
     ):
-        """Initialize clickable nodes.
+        """Initialize draggable nodes.
 
         Parameters
         ----------
@@ -100,10 +102,17 @@ class ClickableNodes:
             Dictionary mapping node names to (x, y) positions.
         viewer : napari.Viewer, optional
             The napari viewer for layer selection. If None, clicking is disabled.
+        on_positions_changed : callable, optional
+            Callback when node positions change (for redrawing edges/labels).
         """
         self.viewer = viewer
         self.canvas = canvas
-        self.positions = positions
+        self.positions = positions.copy()  # Make a mutable copy
+        self.on_positions_changed = on_positions_changed
+
+        self._dragging = False
+        self._drag_index = None
+        self._selected_index = None
 
         self.x = [positions[key][0] for key in positions]
         self.y = [positions[key][1] for key in positions]
@@ -116,30 +125,82 @@ class ClickableNodes:
             s=200,
             facecolor=[self.VALID_COLOR] * len(self.x),
             edgecolor=[self.UNSELECTED_EDGE] * len(self.x),
+            zorder=10,  # Draw nodes on top
         )
 
-        self.edgecolors = self.points.get_edgecolors()
-        self.canvas.canvas.mpl_connect('pick_event', self.on_pick)
+        self.edgecolors = self.points.get_edgecolors().copy()
 
-    def on_pick(self, event):
-        """Handle click on a node."""
-        self.toggle(event.ind)
+        # Connect mouse events for dragging
+        self.canvas.canvas.mpl_connect('pick_event', self._on_pick)
+        self.canvas.canvas.mpl_connect('button_press_event', self._on_press)
+        self.canvas.canvas.mpl_connect('button_release_event', self._on_release)
+        self.canvas.canvas.mpl_connect('motion_notify_event', self._on_motion)
 
-    def toggle(self, index):
+    def _on_pick(self, event):
+        """Handle pick event on a node."""
+        if event.mouseevent.button == 1:  # Left click
+            ind = event.ind[0] if hasattr(event.ind, '__len__') else event.ind
+            self._drag_index = ind
+            self._select_node(ind)
+
+    def _on_press(self, event):
+        """Handle mouse button press."""
+        if event.button == 1 and self._drag_index is not None:
+            self._dragging = True
+
+    def _on_release(self, event):
+        """Handle mouse button release."""
+        if event.button == 1:
+            self._dragging = False
+            self._drag_index = None
+
+    def _on_motion(self, event):
+        """Handle mouse motion for dragging."""
+        if not self._dragging or self._drag_index is None:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        # Update the position
+        idx = self._drag_index
+        keys = list(self.positions.keys())
+        node_name = keys[idx]
+
+        # Update stored position
+        self.positions[node_name] = (event.xdata, event.ydata)
+        self.x[idx] = event.xdata
+        self.y[idx] = event.ydata
+
+        # Update scatter plot
+        offsets = self.points.get_offsets()
+        offsets[idx] = [event.xdata, event.ydata]
+        self.points.set_offsets(offsets)
+
+        # Notify parent to redraw edges and labels
+        if self.on_positions_changed:
+            self.on_positions_changed()
+        else:
+            self.canvas.draw()
+
+    def _select_node(self, index):
         """Select a node and its corresponding layer."""
+        # Reset previous selection
         edgecolors = self.edgecolors.copy()
+
+        # Highlight new selection
         edgecolors[index] = self.SELECTED_EDGE
         self.points.set_edgecolors(edgecolors)
+        self._selected_index = index
         self.canvas.draw()
 
         if self.viewer is None:
             return
 
         keys = list(self.positions.keys())
-        idx = index[0] if hasattr(index, '__len__') else index
+        node_name = keys[index]
 
-        if keys[idx] in self.viewer.layers:
-            layer = self.viewer.layers[keys[idx]]
+        if node_name in self.viewer.layers:
+            layer = self.viewer.layers[node_name]
             self.viewer.layers.selection = {layer}
 
     def update_node_status(self, node_name: str, status: str):
@@ -212,6 +273,11 @@ class WorkflowInspector(QWidget):
         self._graph = None
         self._positions = None
         self._graph_drawing = None
+
+        # Graph drawing elements (for dynamic updates when dragging)
+        self._edge_collection = None
+        self._label_texts = None
+        self._current_workflow = None
 
         # Workflow source: file or live manager
         self._workflow_file: Path | None = None
@@ -667,8 +733,11 @@ class WorkflowInspector(QWidget):
             # Fall back to spring layout if kamada_kawai fails
             self._positions = nx.spring_layout(self._graph)
 
-        # Draw edges
-        nx.draw_networkx_edges(
+        # Store workflow reference for redraw callback
+        self._current_workflow = workflow
+
+        # Draw edges (store reference for redrawing)
+        self._edge_collection = nx.draw_networkx_edges(
             self._graph,
             pos=self._positions,
             ax=ax,
@@ -678,15 +747,9 @@ class WorkflowInspector(QWidget):
             arrowsize=15,
         )
 
-        # Create clickable nodes (viewer only in live mode)
-        viewer = self._viewer if self._use_live_mode else None
-        self._graph_drawing = ClickableNodes(
-            self.graph_widget.canvas, self._positions, viewer
-        )
-
-        # Draw labels
+        # Draw labels (store reference for redrawing)
         props = {'boxstyle': 'round', 'facecolor': 'white', 'alpha': 0.2}
-        nx.draw_networkx_labels(
+        self._label_texts = nx.draw_networkx_labels(
             self._graph,
             pos=self._positions,
             ax=ax,
@@ -694,8 +757,73 @@ class WorkflowInspector(QWidget):
             bbox=props,
             verticalalignment='bottom',
         )
+        # Set high z-order for labels so they render on top
+        for text in self._label_texts.values():
+            text.set_zorder(20)
+
+        # Create draggable nodes (viewer only in live mode)
+        viewer = self._viewer if self._use_live_mode else None
+        self._graph_drawing = DraggableNodes(
+            self.graph_widget.canvas,
+            self._positions,
+            viewer,
+            on_positions_changed=self._on_node_positions_changed,
+        )
 
         self._update_graph_colors(workflow)
+        self.graph_widget.canvas.draw()
+
+    def _on_node_positions_changed(self):
+        """Callback when node positions change due to dragging."""
+        import networkx as nx
+
+        if self._graph is None or self._graph_drawing is None:
+            return
+
+        ax = self.graph_widget.canvas.axes
+
+        # Update positions from draggable nodes
+        self._positions = self._graph_drawing.positions
+
+        # Remove old edges
+        if self._edge_collection is not None:
+            # Handle both FancyArrowPatch list and LineCollection
+            if hasattr(self._edge_collection, '__iter__'):
+                for edge in self._edge_collection:
+                    edge.remove()
+            else:
+                self._edge_collection.remove()
+
+        # Remove old labels
+        if self._label_texts is not None:
+            for text in self._label_texts.values():
+                text.remove()
+
+        # Redraw edges with new positions
+        self._edge_collection = nx.draw_networkx_edges(
+            self._graph,
+            pos=self._positions,
+            ax=ax,
+            width=2,
+            edge_color='white',
+            arrows=True,
+            arrowsize=15,
+        )
+
+        # Redraw labels with new positions
+        props = {'boxstyle': 'round', 'facecolor': 'white', 'alpha': 0.2}
+        self._label_texts = nx.draw_networkx_labels(
+            self._graph,
+            pos=self._positions,
+            ax=ax,
+            font_color='white',
+            bbox=props,
+            verticalalignment='bottom',
+        )
+        # Set high z-order for labels so they render on top
+        for text in self._label_texts.values():
+            text.set_zorder(20)
+
         self.graph_widget.canvas.draw()
 
     def _update_graph_colors(self, workflow):
