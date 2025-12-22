@@ -18,12 +18,6 @@ Example
 >>> loaded = load_workflow("my_workflow.yaml")
 >>> loaded.set("input", image_data)
 >>> result = loaded.get("blurred")
-
-Attribution
------------
-This package includes code derived from napari-workflows:
-https://github.com/haesleinhuepf/napari-workflows
-Copyright (c) 2021, Robert Haase - BSD 3-Clause License
 """
 
 try:
