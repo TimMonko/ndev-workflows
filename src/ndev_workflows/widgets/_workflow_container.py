@@ -440,22 +440,125 @@ class WorkflowContainer(Container):
             )
 
         for task_idx, task in enumerate(self._tasks_select.value):
+            func = workflow.get_function(task)
             result = workflow.get(name=task)
-            yield task_idx, task, result
+            yield task_idx, task, result, func
 
         return
 
     def _viewer_workflow_yielded(self, value):
-        task_idx, task, result = value
-        # TODO: estimate layer type and call proper add function (could be label)
-        self._viewer.add_image(
-            result,
-            name=task,
-            blending='additive',
-            scale=self._root_scale if self._root_scale is not None else None,
-        )
+        task_idx, task, result, func = value
+        self._add_result_to_viewer(task=task, result=result, func=func)
         self._progress_bar.value = task_idx + 1
         return
+
+    def _add_result_to_viewer(self, *, task: str, result, func=None) -> None:
+        """Add a workflow result to the viewer using a best-effort layer choice.
+
+        Rules:
+        - If the task returns a napari LayerDataTuple ``(data, kwargs, layer_type)``,
+          use that (this is the recommended way for non-image outputs like shapes).
+        - Otherwise, if the result looks array-like, choose between labels vs image
+          conservatively and fall back to add_image.
+
+        Notes
+        -----
+        We intentionally do NOT try to guess points/shapes from an ``(N, D)`` array
+        because that is ambiguous with images. For those cases, return a
+        LayerDataTuple from the workflow task.
+        """
+        if self._viewer is None:
+            return
+
+        scale = self._root_scale if self._root_scale is not None else None
+
+        # Preferred: explicit LayerDataTuple
+        if (
+            isinstance(result, tuple)
+            and len(result) == 3
+            and isinstance(result[2], str)
+        ):
+            data, kwargs, layer_type = result
+            if kwargs is None:
+                kwargs = {}
+            if not isinstance(kwargs, dict):
+                kwargs = dict(kwargs)
+
+            kwargs.setdefault('name', task)
+            if scale is not None and 'scale' not in kwargs:
+                kwargs['scale'] = scale
+
+            add_name = f'add_{layer_type}'
+            add_fn = getattr(self._viewer, add_name, None)
+            if callable(add_fn):
+                add_fn(data, **kwargs)
+                return
+
+        # Fallback: array-like results -> labels vs image
+        looks_array_like = all(
+            hasattr(result, attr) for attr in ('shape', 'ndim', 'dtype')
+        )
+        if looks_array_like:
+            import numpy as np
+
+            def _is_probably_labels(arr) -> bool:
+                try:
+                    if arr.ndim < 2:
+                        return False
+                    if not (
+                        np.issubdtype(arr.dtype, np.integer)
+                        or np.issubdtype(arr.dtype, np.bool_)
+                    ):
+                        return False
+
+                    flat = np.asarray(arr).ravel()
+                    if flat.size == 0:
+                        return False
+
+                    # Sample to avoid expensive unique() on large arrays.
+                    if flat.size > 4096:
+                        step = max(1, flat.size // 4096)
+                        flat = flat[::step]
+
+                    uniq = np.unique(flat)
+                    if uniq.size > 256:
+                        return False
+                    return not uniq.min(initial=0) < 0
+                except Exception:  # noqa
+                    return False
+
+            if _is_probably_labels(result):
+                self._viewer.add_labels(
+                    result,
+                    name=task,
+                    scale=scale,
+                )
+                return
+
+            self._viewer.add_image(
+                result,
+                name=task,
+                blending='additive',
+                scale=scale,
+            )
+            return
+
+        # Last resort: try add_image, otherwise show a helpful error.
+        try:
+            self._viewer.add_image(
+                result,
+                name=task,
+                blending='additive',
+                scale=scale,
+            )
+        except Exception as e:  # noqa
+            from napari.utils.notifications import show_error
+
+            show_error(
+                f"Cannot add result for task '{task}' to the viewer: {e}. "
+                'For non-image outputs, return a LayerDataTuple '
+                '(data, kwargs, layer_type) from the workflow task.'
+            )
 
     def viewer_workflow_threaded(self):
         """Run the viewer workflow with threading and progress bar updates."""
