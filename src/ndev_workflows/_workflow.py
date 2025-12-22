@@ -62,7 +62,7 @@ class WorkflowNotRunnableError(RuntimeError):
             if top:
                 alt = top.replace('_', '-')
                 if alt != top:
-                    suggestion = f'pip install {top} (or {alt})'
+                    suggestion = f'pip install {alt}'
                 else:
                     suggestion = f'pip install {top}'
 

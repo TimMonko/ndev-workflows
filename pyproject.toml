@@ -50,6 +50,7 @@ dev = [
     "pytest-cov",  # https://pytest-cov.readthedocs.io/en/latest/
     "pytest-qt",
     "napari[pyqt6]",
+    "napari-segment-blobs-and-things-with-membranes",  # TODO: adds 76 transient dependencies, yuck. currently for legacy/current sample test workflows. will try to remove in future
 ]
 
 [project.entry-points."napari.manifest"]
