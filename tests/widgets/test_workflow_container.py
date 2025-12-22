@@ -263,7 +263,7 @@ def test_viewer_workflow(make_napari_viewer):
         (1, 'nucleus-label'),
     ]
     # check that the generator yields a value
-    for idx, (task_idx, task, result) in enumerate(generator):
+    for idx, (task_idx, task, result, _func) in enumerate(generator):
         assert task_idx == expected_results[idx][0]
         assert task == expected_results[idx][1]
         assert isinstance(result, np.ndarray)
@@ -274,7 +274,7 @@ def test_viewer_workflow_yielded(make_napari_viewer):
     container = WorkflowContainer(viewer)
     data = np.random.randint(0, 2, (10, 10, 10))
 
-    value = (1, 'test-name', data)
+    value = (1, 'test-name', data, None)
     container._viewer_workflow_yielded(value)
 
     assert container._progress_bar.value == 2  # idx + 1
