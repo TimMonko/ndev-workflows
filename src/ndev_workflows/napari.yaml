@@ -1,8 +1,12 @@
 name: ndev-workflows
 display_name: ndev Workflows
-# use 'hidden' to remove plugin from napari hub search results
 visibility: public
-# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
-# categories: []
+categories: [Utilities]
 contributions:
   commands:
+    - id: ndev-workflows.workflow_container
+      title: Workflow Container
+      python_name: ndev_workflows.widgets._workflow_container:WorkflowContainer
+  widgets:
+    - command: ndev-workflows.workflow_container
+      display_name: Workflow Container

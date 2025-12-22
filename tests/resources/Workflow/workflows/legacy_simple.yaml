@@ -1,0 +1,9 @@
+!!python/object:napari_workflows._workflow.Workflow
+_tasks:
+  blurred: !!python/tuple
+  - !!python/name:skimage.filters.gaussian ''
+  - image
+  - 2.0
+  labels: !!python/tuple
+  - !!python/name:skimage.measure.label ''
+  - blurred
