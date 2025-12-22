@@ -1,8 +1,5 @@
 """Core Workflow class for ndev-workflows.
 
-This module is derived from napari-workflows by Robert Haase (BSD-3-Clause).
-See NOTICE file for attribution.
-
 The Workflow class represents a dask-compatible task graph that tracks
 dependencies between processing steps in napari.
 """
@@ -108,6 +105,7 @@ class Workflow:
     def __init__(self) -> None:
         """Initialize an empty workflow."""
         self._tasks: dict[str, tuple] = {}
+        self.metadata: dict[str, object] = {}
 
     def set(
         self,

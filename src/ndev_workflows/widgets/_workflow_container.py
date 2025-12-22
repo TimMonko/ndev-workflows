@@ -25,7 +25,6 @@ from ndevio import helpers
 from ndev_workflows import (
     WorkflowNotRunnableError,
     ensure_runnable,
-    get_workflow_metadata,
     load_workflow,
     process_workflow_file,
 )
@@ -298,27 +297,27 @@ class WorkflowContainer(Container):
     def _get_workflow_info(self):
         """Load the workflow file and update the roots and leafs.
 
-        Uses get_workflow_metadata for fast preview, then loads full workflow.
+        Uses the loaded Workflow's metadata for fast preview.
         """
         workflow_path = self.workflow_file.value
 
-        # Get metadata for fast preview (works for both legacy and new formats)
+        # Load workflow lazily so missing optional deps don't break the UI.
+        # load_workflow() does not import task functions when lazy=True.
         try:
-            metadata = get_workflow_metadata(workflow_path)
-            self._workflow_inputs = metadata.get(
-                'inputs', []
-            )  # Store for reuse
-            self._workflow_roots.value = str(self._workflow_inputs)
-            self._update_roots_from_list(self._workflow_inputs)
-            self._update_task_choices(
-                tasks=metadata.get('tasks', []),
-                leafs=metadata.get('outputs', []),
-            )
+            self.workflow = load_workflow(workflow_path, lazy=True)
         except Exception:  # noqa
-            pass
+            self.workflow = None
+            return
 
-        # Load full workflow lazily so missing optional deps don't break the UI.
-        self.workflow = load_workflow(workflow_path, lazy=True)
+        metadata = getattr(self.workflow, 'metadata', {}) or {}
+        self._workflow_inputs = list(metadata.get('inputs', []))
+        self._workflow_roots.value = str(self._workflow_inputs)
+        self._update_roots_from_list(self._workflow_inputs)
+
+        self._update_task_choices(
+            tasks=self.workflow.processing_task_names(),
+            leafs=list(metadata.get('outputs', [])),
+        )
         return
 
     def _update_roots_from_list(self, roots: list[str]):

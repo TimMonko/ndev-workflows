@@ -24,8 +24,6 @@ I/O Functions
 -------------
 save_workflow, load_workflow : functions
     Human-readable YAML format (recommended).
-get_workflow_metadata : function
-    Read workflow metadata without importing functions.
 migrate_legacy : function
     Convert legacy napari-workflows files to new format.
 
@@ -66,7 +64,6 @@ from ._batch import process_workflow_file
 # I/O functions
 from ._io import (
     WorkflowYAMLError,
-    get_workflow_metadata,
     is_legacy_format,
     load_workflow,
     migrate_legacy,
@@ -109,7 +106,6 @@ __all__ = (
     # I/O functions
     'save_workflow',
     'load_workflow',
-    'get_workflow_metadata',
     'migrate_legacy',
     'is_legacy_format',
     'WorkflowYAMLError',

@@ -91,6 +91,13 @@ def workflow_to_spec_dict(
 def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
     """Convert a new-format YAML spec dict to a Workflow object."""
     workflow = Workflow()
+    workflow.metadata = {
+        'name': spec.get('name'),
+        'description': spec.get('description'),
+        'modified': spec.get('modified'),
+        'inputs': spec.get('inputs', []),
+        'outputs': spec.get('outputs', []),
+    }
     tasks = spec.get('tasks', {})
 
     for task_name, task_data in tasks.items():

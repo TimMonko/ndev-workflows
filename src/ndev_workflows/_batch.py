@@ -1,7 +1,4 @@
-"""Batch-processing helpers for ndev-workflows.
-
-This module is intentionally UI-free.
-"""
+"""Batch-processing helpers for ndev-workflows."""
 
 from __future__ import annotations
 

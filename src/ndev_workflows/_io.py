@@ -97,14 +97,17 @@ def load_workflow(filename: str | Path, *, lazy: bool = False) -> Workflow:
     # lazy/eager workflow construction logic.
     if is_legacy_format(filename):
         spec = legacy_yaml_to_spec_dict(filename, include_modified=False)
+        is_legacy = True
     else:
         try:
             with open(filename) as f:
                 spec = yaml.safe_load(f)
         except yaml.YAMLError as e:
             raise WorkflowYAMLError(f'Failed to parse YAML: {e}') from e
+        is_legacy = False
 
     workflow = spec_dict_to_workflow(spec, lazy=True)
+    workflow.metadata['legacy'] = is_legacy
     if lazy:
         return workflow
 
@@ -112,53 +115,6 @@ def load_workflow(filename: str | Path, *, lazy: bool = False) -> Workflow:
         return ensure_runnable(workflow)
     except WorkflowNotRunnableError as e:
         raise WorkflowYAMLError(str(e)) from e
-
-
-def get_workflow_metadata(filename: str | Path) -> dict:
-    """Get metadata from a workflow file without loading functions.
-
-    Parameters
-    ----------
-    filename : str or Path
-        Path to the YAML file.
-
-    Returns
-    -------
-    dict
-        Metadata including name, description, inputs, outputs.
-
-    Example
-    -------
-    >>> metadata = get_workflow_metadata("my_workflow.yaml")
-    >>> print(metadata['name'], metadata['inputs'], metadata['outputs'])
-    """
-    # Handle legacy format
-    if is_legacy_format(filename):
-        legacy_data = legacy_yaml_to_spec_dict(
-            filename, include_modified=False
-        )
-        return {
-            'name': None,
-            'description': None,
-            'modified': None,
-            'inputs': legacy_data.get('inputs', []),
-            'outputs': legacy_data.get('outputs', []),
-            'tasks': list(legacy_data.get('tasks', {}).keys()),
-            'legacy': True,
-        }
-
-    with open(filename) as f:
-        data = yaml.safe_load(f)
-
-    return {
-        'name': data.get('name'),
-        'description': data.get('description'),
-        'modified': data.get('modified'),
-        'inputs': data.get('inputs', []),
-        'outputs': data.get('outputs', []),
-        'tasks': list(data.get('tasks', {}).keys()),
-        'legacy': False,
-    }
 
 
 def migrate_legacy(
@@ -213,7 +169,6 @@ __all__ = [
     'WorkflowYAMLError',
     'save_workflow',
     'load_workflow',
-    'get_workflow_metadata',
     'migrate_legacy',
     'is_legacy_format',
 ]

@@ -12,7 +12,6 @@ from ndev_workflows import (
     WorkflowNotRunnableError,
     WorkflowYAMLError,
     ensure_runnable,
-    get_workflow_metadata,
     load_workflow,
     save_workflow,
 )
@@ -122,10 +121,9 @@ class TestWorkflowMetadata:
         filepath = tmp_path / 'workflow.yaml'
         save_workflow(filepath, w, name='Test Workflow')
 
-        metadata = get_workflow_metadata(filepath)
+        metadata = load_workflow(filepath, lazy=True).metadata
 
         assert metadata['name'] == 'Test Workflow'
-        assert 'processed' in metadata['tasks']
         assert metadata['legacy'] is False
 
     def test_get_metadata_inputs_outputs(
@@ -142,7 +140,7 @@ class TestWorkflowMetadata:
         filepath = tmp_path / 'workflow.yaml'
         save_workflow(filepath, w)
 
-        metadata = get_workflow_metadata(filepath)
+        metadata = load_workflow(filepath, lazy=True).metadata
 
         # When loaded, 'input' becomes an external input (since data tasks aren't saved)
         # The saved workflow's external_inputs() finds 'input' as referenced but undefined
@@ -162,10 +160,10 @@ class TestWorkflowMetadata:
         filepath = tmp_path / 'workflow.yaml'
         save_workflow(filepath, w)
 
-        metadata = get_workflow_metadata(filepath)
+        workflow = load_workflow(filepath, lazy=True)
 
-        assert 'blur' in metadata['tasks']
-        assert 'threshold' in metadata['tasks']
+        assert 'blur' in workflow.processing_task_names()
+        assert 'threshold' in workflow.processing_task_names()
 
 
 class TestWorkflowYAMLError:
@@ -355,7 +353,7 @@ def test_workflow_method_ensure_runnable_resolves_callable_ref():
 
     def test_legacy_metadata(self, legacy_workflow_path: Path):
         """Test getting metadata from legacy format."""
-        metadata = get_workflow_metadata(legacy_workflow_path)
+        metadata = load_workflow(legacy_workflow_path, lazy=True).metadata
 
         assert metadata['legacy'] is True
         assert 'image' in metadata['inputs']
