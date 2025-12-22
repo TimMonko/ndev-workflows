@@ -13,8 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from ._spec import CallableRef
-from ._workflow import Workflow
+from ._workflow import CallableRef, Workflow
 
 
 def is_legacy_format(filename: str | Path) -> bool:

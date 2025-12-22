@@ -304,7 +304,7 @@ class TestLegacyFormatLoading:
         workflow = load_workflow(legacy_workflow_path, lazy=True)
 
         # Should have CallableRef placeholders
-        from ndev_workflows._spec import CallableRef
+        from ndev_workflows._workflow import CallableRef
 
         task = workflow._tasks['blurred']
         assert isinstance(task[0], CallableRef)
@@ -342,6 +342,16 @@ def test_ensure_runnable_reports_missing_callable():
 
     with pytest.raises(WorkflowNotRunnableError, match='Cannot import'):
         ensure_runnable(spec)
+
+
+def test_workflow_method_ensure_runnable_resolves_callable_ref():
+    from ndev_workflows._workflow import CallableRef, Workflow
+
+    w = Workflow()
+    w._tasks['y'] = (CallableRef('math', 'sqrt'), 'x')
+    w.ensure_runnable()
+    w.set('x', 16.0)
+    assert w.get('y') == 4.0
 
     def test_legacy_metadata(self, legacy_workflow_path: Path):
         """Test getting metadata from legacy format."""

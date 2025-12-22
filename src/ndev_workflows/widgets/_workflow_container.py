@@ -32,6 +32,8 @@ from nbatch import batch
 from ndevio import helpers
 
 from ndev_workflows import (
+    WorkflowNotRunnableError,
+    ensure_runnable,
     get_workflow_metadata,
     load_workflow,
 )
@@ -91,7 +93,8 @@ def process_workflow_file(
 
     # Load fresh workflow instance for thread safety
     # load_workflow handles both legacy and new formats
-    workflow = load_workflow(str(workflow_file))
+    workflow = load_workflow(str(workflow_file), lazy=True)
+    workflow = ensure_runnable(workflow)
 
     img = nImage(image_file)
 
@@ -430,8 +433,8 @@ class WorkflowContainer(Container):
         except Exception:  # noqa
             pass
 
-        # Load full workflow for execution
-        self.workflow = load_workflow(workflow_path)
+        # Load full workflow lazily so missing optional deps don't break the UI.
+        self.workflow = load_workflow(workflow_path, lazy=True)
         return
 
     def _update_roots_from_list(self, roots: list[str]):
@@ -531,7 +534,15 @@ class WorkflowContainer(Container):
     def viewer_workflow(self):
         """Run the workflow on the viewer layers."""
         # Reload workflow for fresh state (previous run may have set data)
-        workflow = load_workflow(self.workflow_file.value)
+        workflow = load_workflow(self.workflow_file.value, lazy=True)
+
+        try:
+            workflow = ensure_runnable(workflow)
+        except WorkflowNotRunnableError as e:
+            from napari.utils.notifications import show_error
+
+            show_error(str(e))
+            return
 
         root_layer_list = [
             widget.value for widget in self._viewer_roots_container

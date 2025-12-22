@@ -60,9 +60,6 @@ except ImportError:
 # ndevio dependency issues when ndevio is installed from PyPI
 from typing import TYPE_CHECKING
 
-# Runnable checks / resolution
-from ._ensure import WorkflowNotRunnableError, ensure_runnable
-
 # I/O functions
 from ._io import (
     WorkflowYAMLError,
@@ -76,9 +73,12 @@ from ._io import (
 # Workflow manager for napari integration
 from ._manager import WorkflowManager
 
+# Runnable checks / resolution
+from ._spec import ensure_runnable
+
 # Undo/redo functionality
 from ._undo_redo import UndoRedoController, copy_workflow_state
-from ._workflow import Workflow
+from ._workflow import Workflow, WorkflowNotRunnableError
 
 if TYPE_CHECKING:
     from .widgets._workflow_container import (

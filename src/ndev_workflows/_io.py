@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from ._ensure import WorkflowNotRunnableError, ensure_runnable
 from ._io_legacy import is_legacy_format
 from ._spec import (
+    ensure_runnable,
     legacy_yaml_to_spec_dict,
     spec_dict_to_workflow,
     workflow_to_spec_dict,
 )
-from ._workflow import Workflow
+from ._workflow import Workflow, WorkflowNotRunnableError
 
 if TYPE_CHECKING:
     pass
@@ -93,33 +93,23 @@ def load_workflow(filename: str | Path, *, lazy: bool = False) -> Workflow:
     >>> workflow.set("input", image_data)
     >>> result = workflow.get("output")
     """
-    # Legacy format: parse lazily, normalize to the new-format spec,
-    # then optionally resolve imports.
+    # Always normalize to a spec dict first, then apply the same
+    # lazy/eager workflow construction logic.
     if is_legacy_format(filename):
-        legacy_spec = legacy_yaml_to_spec_dict(
-            filename, include_modified=False
-        )
-        if lazy:
-            return spec_dict_to_workflow(legacy_spec, lazy=True)
+        spec = legacy_yaml_to_spec_dict(filename, include_modified=False)
+    else:
         try:
-            return ensure_runnable(
-                spec_dict_to_workflow(legacy_spec, lazy=True)
-            )
-        except WorkflowNotRunnableError as e:
-            raise WorkflowYAMLError(str(e)) from e
+            with open(filename) as f:
+                spec = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise WorkflowYAMLError(f'Failed to parse YAML: {e}') from e
 
-    # New format: parse YAML and build workflow
-    try:
-        with open(filename) as f:
-            data = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise WorkflowYAMLError(f'Failed to parse YAML: {e}') from e
-
+    workflow = spec_dict_to_workflow(spec, lazy=True)
     if lazy:
-        return spec_dict_to_workflow(data, lazy=True)
+        return workflow
 
     try:
-        return ensure_runnable(spec_dict_to_workflow(data, lazy=True))
+        return ensure_runnable(workflow)
     except WorkflowNotRunnableError as e:
         raise WorkflowYAMLError(str(e)) from e
 

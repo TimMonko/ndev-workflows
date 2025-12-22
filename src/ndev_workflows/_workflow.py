@@ -9,14 +9,71 @@ dependencies between processing steps in napari.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import importlib
+from collections.abc import Callable, Iterable
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+
+class CallableRef:
+    """Placeholder for a callable that hasn't been imported yet."""
+
+    def __init__(self, module: str, name: str):
+        self.module = module
+        self.name = name
+        self.kwargs: dict = {}
+
+    def __repr__(self) -> str:
+        if self.kwargs:
+            return (
+                f'CallableRef({self.module}.{self.name}, kwargs={self.kwargs})'
+            )
+        return f'CallableRef({self.module}.{self.name})'
+
+    def __call__(self, *args, **kwargs):
+        raise WorkflowNotRunnableError(
+            [
+                MissingCallable(
+                    module=self.module,
+                    name=self.name,
+                    error='CallableRef is unresolved (lazy workflow)',
+                )
+            ]
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MissingCallable:
+    module: str
+    name: str
+    error: str
+
+
+class WorkflowNotRunnableError(RuntimeError):
+    def __init__(self, missing: Iterable[MissingCallable]):
+        self.missing = tuple(missing)
+        lines: list[str] = ['Workflow is not runnable; missing callables:']
+        for item in self.missing:
+            top = item.module.split('.', 1)[0] if item.module else ''
+            suggestion = None
+            if top:
+                alt = top.replace('_', '-')
+                if alt != top:
+                    suggestion = f'pip install {top} (or {alt})'
+                else:
+                    suggestion = f'pip install {top}'
+
+            msg = f'- Cannot import {item.module}.{item.name}: {item.error}'
+            if suggestion:
+                msg += f' (try: {suggestion})'
+            lines.append(msg)
+        super().__init__('\n'.join(lines))
 
 
 class Workflow:
@@ -230,6 +287,54 @@ class Workflow:
             for name, task in self._tasks.items()
             if isinstance(task, tuple) and len(task) > 0
         ]
+
+    def ensure_runnable(self) -> Workflow:
+        """Resolve any CallableRef placeholders into real imported callables.
+
+        Parameters
+        ----------
+        Returns
+        -------
+        Workflow
+            Self (mutated in place).
+
+        Raises
+        ------
+        NotRunnableWorkflowError
+            If one or more callables cannot be imported.
+        """
+        missing: list[MissingCallable] = []
+
+        for task_name, task in list(self._tasks.items()):
+            if not isinstance(task, tuple) or len(task) == 0:
+                continue
+
+            func = task[0]
+            if not isinstance(func, CallableRef):
+                continue
+
+            try:
+                module = importlib.import_module(func.module)
+                real_func = getattr(module, func.name)
+            except (ImportError, AttributeError) as e:
+                missing.append(
+                    MissingCallable(
+                        module=func.module,
+                        name=func.name,
+                        error=str(e),
+                    )
+                )
+                continue
+
+            if getattr(func, 'kwargs', None):
+                real_func = partial(real_func, **dict(func.kwargs))
+
+            self._tasks[task_name] = (real_func, *task[1:])
+
+        if missing:
+            raise WorkflowNotRunnableError(missing)
+
+        return self
 
     def root_functions(self) -> dict[str, tuple]:
         """Return the functions that operate directly on root inputs.

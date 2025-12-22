@@ -16,30 +16,7 @@ from functools import partial
 from pathlib import Path
 
 from ._io_legacy import load_legacy_lazy
-from ._workflow import Workflow
-
-
-class CallableRef:
-    """Placeholder for a callable that hasn't been imported yet."""
-
-    def __init__(self, module: str, name: str):
-        self.module = module
-        self.name = name
-        self.kwargs: dict = {}
-
-    def __repr__(self) -> str:
-        if self.kwargs:
-            return (
-                f'CallableRef({self.module}.{self.name}, kwargs={self.kwargs})'
-            )
-        return f'CallableRef({self.module}.{self.name})'
-
-    def __call__(self, *args, **kwargs):
-        raise NotImplementedError(
-            f'Cannot call {self.module}.{self.name} from a lazy workflow. '
-            f'Load/prepare the workflow eagerly (e.g. ensure_runnable(...)) '
-            f'or install the required dependency.'
-        )
+from ._workflow import CallableRef, Workflow
 
 
 def workflow_to_spec_dict(
@@ -154,6 +131,21 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
         workflow._tasks[task_name] = (func, *args)
 
     return workflow
+
+
+def ensure_runnable(
+    workflow_or_spec: Workflow | dict,
+) -> Workflow:
+    """Ensure a workflow is runnable.
+
+    Accepts either a Workflow (possibly loaded with ``lazy=True``) or a
+    new-format spec dict.
+    """
+    if isinstance(workflow_or_spec, dict):
+        workflow = spec_dict_to_workflow(workflow_or_spec, lazy=True)
+    else:
+        workflow = workflow_or_spec
+    return workflow.ensure_runnable()
 
 
 def legacy_yaml_to_spec_dict(
