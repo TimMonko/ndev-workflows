@@ -153,7 +153,10 @@ class TestWorkflowInspector:
         save_workflow(yaml_file, workflow)
 
         inspector.load_workflow_file(yaml_file)
-        info = inspector._build_info_text(inspector._loaded_workflow)
+        loaded = inspector._loaded_workflow
+        info = inspector._build_info_text(
+            loaded, loaded.roots(), loaded.leaves()
+        )
 
         assert 'Total tasks:' in info
         assert 'Roots' in info
@@ -168,8 +171,8 @@ class TestWorkflowInspector:
 class TestManagerStatusMethods:
     """Test status methods added to WorkflowManager."""
 
-    def test_get_layer_status(self, make_napari_viewer):
-        """Test get_layer_status returns correct status."""
+    def test_get_layer_status_returns_all_statuses(self, make_napari_viewer):
+        """Test get_layer_status returns correct status for all node types."""
         from ndev_workflows._manager import WorkflowManager
 
         viewer = make_napari_viewer()
@@ -178,9 +181,25 @@ class TestManagerStatusMethods:
         def identity(x):
             return x
 
-        manager.workflow.set('output', identity, 'input')
+        def process(a, b):
+            return a + b
 
+        # Build a workflow: input -> middle -> output
+        manager.workflow.set('middle', identity, 'input')
+        manager.workflow.set('output', process, 'middle', 'input')
+
+        # Root status (input nodes)
         assert manager.get_layer_status('input') == 'root'
+
+        # Leaf status (output nodes)
+        assert manager.get_layer_status('output') == 'leaf'
+
+        # Valid status (middle nodes not pending)
+        assert manager.get_layer_status('middle') == 'valid'
+
+        # Invalid status (pending updates) - use public method to set state
+        manager.invalidate('middle')
+        assert manager.get_layer_status('middle') == 'invalid'
 
     def test_is_layer_pending(self, make_napari_viewer):
         """Test is_layer_pending method."""
@@ -189,8 +208,15 @@ class TestManagerStatusMethods:
         viewer = make_napari_viewer()
         manager = WorkflowManager.install(viewer)
 
-        manager._pending_updates.append('test_layer')
-        assert manager.is_layer_pending('test_layer') is True
+        def identity(x):
+            return x
+
+        # Set up a workflow step
+        manager.workflow.set('output', identity, 'input')
+
+        # Use public invalidate() to mark as pending
+        manager.invalidate('output')
+        assert manager.is_layer_pending('output') is True
         assert manager.is_layer_pending('other') is False
 
     def test_pending_updates_property(self, make_napari_viewer):
@@ -200,11 +226,16 @@ class TestManagerStatusMethods:
         viewer = make_napari_viewer()
         manager = WorkflowManager.install(viewer)
 
-        manager._pending_updates.append('test')
+        def identity(x):
+            return x
+
+        manager.workflow.set('test', identity, 'input')
+        manager.invalidate('test')
+
         pending = manager.pending_updates
 
-        assert pending == ['test']
-        # Should be a copy
+        assert 'test' in pending
+        # Should be a copy - modifying returned list shouldn't affect manager
         pending.append('modified')
         assert 'modified' not in manager.pending_updates
 

@@ -140,10 +140,12 @@ class WorkflowManager:
         Returns
         -------
         str
-            One of 'root', 'invalid', or 'valid'.
+            One of 'root', 'leaf', 'invalid', or 'valid'.
         """
         if name in self._workflow.roots():
             return 'root'
+        elif name in self._workflow.leaves():
+            return 'leaf'
         elif name in self._pending_updates:
             return 'invalid'
         else:

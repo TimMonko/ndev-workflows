@@ -36,6 +36,7 @@ def _check_matplotlib():
     """Check if matplotlib is available."""
     try:
         import matplotlib  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -58,9 +59,7 @@ class MplCanvas:
 
         self.fig = Figure()
         self.axes = self.fig.add_subplot(111)
-        self.fig.subplots_adjust(
-            left=0.04, bottom=0.04, right=0.97, top=0.96
-        )
+        self.fig.subplots_adjust(left=0.04, bottom=0.04, right=0.97, top=0.96)
         # Dark theme to match napari
         self.fig.patch.set_facecolor('#262930')
         self.axes.set_facecolor('#262930')
@@ -126,8 +125,11 @@ class DraggableNodes:
         self._drag_index = None
         self._selected_index = None
 
-        self.x = [positions[key][0] for key in positions]
-        self.y = [positions[key][1] for key in positions]
+        # Cache keys list for consistent indexing
+        self._keys: list[str] = list(positions.keys())
+
+        self.x = [positions[key][0] for key in self._keys]
+        self.y = [positions[key][1] for key in self._keys]
 
         # Create scatter plot of nodes
         self.points = self.canvas.axes.scatter(
@@ -142,11 +144,25 @@ class DraggableNodes:
 
         self.edgecolors = self.points.get_edgecolors().copy()
 
-        # Connect mouse events for dragging
-        self.canvas.canvas.mpl_connect('pick_event', self._on_pick)
-        self.canvas.canvas.mpl_connect('button_press_event', self._on_press)
-        self.canvas.canvas.mpl_connect('button_release_event', self._on_release)
-        self.canvas.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        # Connect mouse events for dragging and store connection IDs for cleanup
+        self._cids = [
+            self.canvas.canvas.mpl_connect('pick_event', self._on_pick),
+            self.canvas.canvas.mpl_connect(
+                'button_press_event', self._on_press
+            ),
+            self.canvas.canvas.mpl_connect(
+                'button_release_event', self._on_release
+            ),
+            self.canvas.canvas.mpl_connect(
+                'motion_notify_event', self._on_motion
+            ),
+        ]
+
+    def disconnect(self):
+        """Disconnect all event handlers to prevent memory leaks."""
+        for cid in self._cids:
+            self.canvas.canvas.mpl_disconnect(cid)
+        self._cids.clear()
 
     def _on_pick(self, event):
         """Handle pick event on a node."""
@@ -175,8 +191,10 @@ class DraggableNodes:
 
         # Update the position
         idx = self._drag_index
-        keys = list(self.positions.keys())
-        node_name = keys[idx]
+        if idx >= len(self._keys):
+            return
+
+        node_name = self._keys[idx]
 
         # Update stored position
         self.positions[node_name] = (event.xdata, event.ydata)
@@ -196,6 +214,9 @@ class DraggableNodes:
 
     def _select_node(self, index):
         """Select a node and its corresponding layer."""
+        if index >= len(self._keys):
+            return
+
         # Reset previous selection
         edgecolors = self.edgecolors.copy()
 
@@ -208,8 +229,7 @@ class DraggableNodes:
         if self.viewer is None:
             return
 
-        keys = list(self.positions.keys())
-        node_name = keys[index]
+        node_name = self._keys[index]
 
         if node_name in self.viewer.layers:
             layer = self.viewer.layers[node_name]
@@ -225,19 +245,21 @@ class DraggableNodes:
         status : str
             One of 'valid', 'invalid', 'root', or 'leaf'.
         """
-        for idx, key in enumerate(self.positions.keys()):
-            if key == node_name:
-                facecolors = self.points.get_facecolors()
-                if status == 'invalid':
-                    facecolors[idx] = self.INVALID_COLOR
-                elif status == 'root':
-                    facecolors[idx] = self.ROOT_COLOR
-                elif status == 'leaf':
-                    facecolors[idx] = self.LEAF_COLOR
-                else:
-                    facecolors[idx] = self.VALID_COLOR
-                self.points.set_facecolors(facecolors)
-                break
+        try:
+            idx = self._keys.index(node_name)
+        except ValueError:
+            return
+
+        facecolors = self.points.get_facecolors()
+        if status == 'invalid':
+            facecolors[idx] = self.INVALID_COLOR
+        elif status == 'root':
+            facecolors[idx] = self.ROOT_COLOR
+        elif status == 'leaf':
+            facecolors[idx] = self.LEAF_COLOR
+        else:
+            facecolors[idx] = self.VALID_COLOR
+        self.points.set_facecolors(facecolors)
 
 
 class MatplotlibWidget(QWidget):
@@ -398,7 +420,10 @@ class WorkflowInspector(QWidget):
         # Spacer
         layout.addItem(
             QSpacerItem(
-                20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
+                20,
+                40,
+                QSizePolicy.Policy.Minimum,
+                QSizePolicy.Policy.Expanding,
             )
         )
 
@@ -511,9 +536,35 @@ class WorkflowInspector(QWidget):
         str
             One of 'root', 'leaf', 'invalid', or 'valid'.
         """
-        roots = workflow.roots()
-        leaves = workflow.leaves()
+        return self._get_node_status_cached(
+            node_name, workflow, workflow.roots(), workflow.leaves()
+        )
 
+    def _get_node_status_cached(
+        self,
+        node_name: str,
+        workflow,
+        roots: list[str],
+        leaves: list[str],
+    ) -> str:
+        """Determine the status of a node using cached roots/leaves.
+
+        Parameters
+        ----------
+        node_name : str
+            The name of the node/task.
+        workflow : Workflow
+            The workflow being inspected.
+        roots : list[str]
+            Cached list of root nodes.
+        leaves : list[str]
+            Cached list of leaf nodes.
+
+        Returns
+        -------
+        str
+            One of 'root', 'leaf', 'invalid', or 'valid'.
+        """
         # Check if it's a root (input)
         if node_name in roots:
             return 'root'
@@ -525,7 +576,7 @@ class WorkflowInspector(QWidget):
         # In live mode, check for pending updates
         if self._use_live_mode:
             manager = self._get_manager()
-            if manager and node_name in manager._pending_updates:
+            if manager and manager.is_layer_pending(node_name):
                 return 'invalid'
 
             # Check if layer exists in viewer
@@ -540,7 +591,9 @@ class WorkflowInspector(QWidget):
 
         if workflow is None or len(workflow) == 0:
             self.lbl_from_roots.setText('No workflow loaded or empty workflow')
-            self.lbl_from_leaves.setText('No workflow loaded or empty workflow')
+            self.lbl_from_leaves.setText(
+                'No workflow loaded or empty workflow'
+            )
             self.lbl_raw.setText('No workflow loaded or empty workflow')
             self.lbl_info.setText('Load a YAML file or enable live mode')
             if self.graph_widget is not None:
@@ -548,19 +601,19 @@ class WorkflowInspector(QWidget):
                 self.graph_widget.canvas.draw()
             return
 
-        # Update tree views
+        # Cache roots and leaves to avoid repeated computation
         roots = workflow.roots()
+        leaves = workflow.leaves()
 
         # From Roots view
         roots_text = self._build_tree_html(
-            roots, workflow.followers_of, workflow
+            roots, workflow.followers_of, workflow, roots, leaves
         )
         self.lbl_from_roots.setText(self._wrap_html(roots_text))
 
         # From Leaves view
-        leaves = workflow.leaves()
         leaves_text = self._build_tree_html(
-            leaves, workflow.sources_of, workflow
+            leaves, workflow.sources_of, workflow, roots, leaves
         )
         self.lbl_from_leaves.setText(self._wrap_html(leaves_text))
 
@@ -568,7 +621,7 @@ class WorkflowInspector(QWidget):
         self.lbl_raw.setText(repr(workflow))
 
         # Info view
-        info_text = self._build_info_text(workflow)
+        info_text = self._build_info_text(workflow, roots, leaves)
         self.lbl_info.setText(info_text)
 
         # Update graph (only if matplotlib available)
@@ -580,10 +633,15 @@ class WorkflowInspector(QWidget):
             self._graph = new_graph
             self._draw_graph(workflow)
         else:
-            self._update_graph_colors(workflow)
+            self._update_graph_colors(workflow, roots, leaves)
 
     def _build_tree_html(
-        self, items: list[str], get_next: Callable, workflow
+        self,
+        items: list[str],
+        get_next: Callable,
+        workflow,
+        roots: list[str],
+        leaves: list[str],
     ) -> str:
         """Build an HTML tree representation.
 
@@ -595,12 +653,18 @@ class WorkflowInspector(QWidget):
             Function to get next items (followers_of or sources_of).
         workflow : Workflow
             The workflow object.
+        roots : list[str]
+            Cached list of root nodes.
+        leaves : list[str]
+            Cached list of leaf nodes.
 
         Returns
         -------
         str
             HTML string representing the tree.
         """
+        import html
+
         visited = set()
 
         def build(item_list: list[str], level: int = 0) -> str:
@@ -610,7 +674,9 @@ class WorkflowInspector(QWidget):
                     continue
                 visited.add(item)
 
-                status = self._get_node_status(item, workflow)
+                status = self._get_node_status_cached(
+                    item, workflow, roots, leaves
+                )
                 color = {
                     'root': '#dddddd',  # Light gray
                     'leaf': '#5599ff',  # Light blue
@@ -619,7 +685,8 @@ class WorkflowInspector(QWidget):
                 }.get(status, '#dddddd')
 
                 indent = '&nbsp;&nbsp;&nbsp;' * level
-                output += f'<font color="{color}">{indent}→ {item}</font><br>'
+                escaped_name = html.escape(item)
+                output += f'<font color="{color}">{indent}→ {escaped_name}</font><br>'
 
                 next_items = get_next(item)
                 if next_items:
@@ -633,13 +700,19 @@ class WorkflowInspector(QWidget):
         """Wrap content in HTML tags."""
         return f'<html><pre>{content}</pre></html>'
 
-    def _build_info_text(self, workflow) -> str:
+    def _build_info_text(
+        self, workflow, roots: list[str], leaves: list[str]
+    ) -> str:
         """Build workflow info text.
 
         Parameters
         ----------
         workflow : Workflow
             The workflow object.
+        roots : list[str]
+            Cached list of root nodes.
+        leaves : list[str]
+            Cached list of leaf nodes.
 
         Returns
         -------
@@ -658,23 +731,23 @@ class WorkflowInspector(QWidget):
         # Workflow stats
         lines.append('─── Workflow Statistics ───')
         lines.append(f'  Total tasks: {len(workflow)}')
-        lines.append(f'  Roots (inputs): {len(workflow.roots())}')
-        lines.append(f'  Leaves (outputs): {len(workflow.leaves())}')
+        lines.append(f'  Roots (inputs): {len(roots)}')
+        lines.append(f'  Leaves (outputs): {len(leaves)}')
         lines.append('')
 
         # Root details
         lines.append('─── Roots (Inputs) ───')
-        for root in workflow.roots():
+        for root in roots:
             lines.append(f'  • {root}')
-        if not workflow.roots():
+        if not roots:
             lines.append('  (none)')
         lines.append('')
 
         # Leaf details
         lines.append('─── Leaves (Outputs) ───')
-        for leaf in workflow.leaves():
+        for leaf in leaves:
             lines.append(f'  • {leaf}')
-        if not workflow.leaves():
+        if not leaves:
             lines.append('  (none)')
         lines.append('')
 
@@ -708,8 +781,12 @@ class WorkflowInspector(QWidget):
                 lines.append('─── Live Mode Info ───')
                 lines.append(f'  Can undo: {undo_redo.can_undo}')
                 lines.append(f'  Can redo: {undo_redo.can_redo}')
-                lines.append(f'  Undo stack: {undo_redo.undo_stack_size} states')
-                lines.append(f'  Redo stack: {undo_redo.redo_stack_size} states')
+                lines.append(
+                    f'  Undo stack: {undo_redo.undo_stack_size} states'
+                )
+                lines.append(
+                    f'  Redo stack: {undo_redo.redo_stack_size} states'
+                )
                 pending = manager.pending_updates
                 if pending:
                     lines.append(f'  Pending updates: {pending}')
@@ -748,10 +825,9 @@ class WorkflowInspector(QWidget):
         """Check if the graph structure has changed."""
         if self._graph is None:
             return True
-        return (
-            set(self._graph.nodes) != set(new_graph.nodes)
-            or set(self._graph.edges) != set(new_graph.edges)
-        )
+        return set(self._graph.nodes) != set(new_graph.nodes) or set(
+            self._graph.edges
+        ) != set(new_graph.edges)
 
     def _draw_graph(self, workflow):
         """Draw the workflow graph."""
@@ -765,6 +841,11 @@ class WorkflowInspector(QWidget):
         ax = self.graph_widget.canvas.axes
         ax.clear()
         ax.set_facecolor('#262930')
+
+        # Cleanup old graph drawing to prevent memory leaks
+        if self._graph_drawing is not None:
+            self._graph_drawing.disconnect()
+            self._graph_drawing = None
 
         # Calculate positions
         try:
@@ -868,18 +949,45 @@ class WorkflowInspector(QWidget):
 
         self.graph_widget.canvas.draw()
 
-    def _update_graph_colors(self, workflow):
-        """Update node colors based on current status."""
+    def _update_graph_colors(
+        self,
+        workflow,
+        roots: list[str] | None = None,
+        leaves: list[str] | None = None,
+    ):
+        """Update node colors based on current status.
+
+        Parameters
+        ----------
+        workflow : Workflow
+            The workflow object.
+        roots : list[str], optional
+            Cached list of root nodes.
+        leaves : list[str], optional
+            Cached list of leaf nodes.
+        """
         if self._graph is None or self._graph_drawing is None:
             return
 
+        # Use cached values or compute if not provided
+        if roots is None:
+            roots = workflow.roots()
+        if leaves is None:
+            leaves = workflow.leaves()
+
         for node in self._graph.nodes:
-            status = self._get_node_status(node, workflow)
+            status = self._get_node_status_cached(
+                node, workflow, roots, leaves
+            )
             self._graph_drawing.update_node_status(node, status)
 
         self.graph_widget.canvas.draw()
 
     def closeEvent(self, a0):
-        """Stop the timer when closing."""
+        """Stop the timer and cleanup when closing."""
         self.timer.stop()
+        # Disconnect matplotlib event handlers to prevent memory leaks
+        if self._graph_drawing is not None:
+            self._graph_drawing.disconnect()
+            self._graph_drawing = None
         super().closeEvent(a0)
