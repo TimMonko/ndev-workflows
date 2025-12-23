@@ -132,12 +132,25 @@ class TestWorkflowInspector:
 
         inspector.load_workflow_file(yaml_file)
 
+        # Get the loaded workflow's roots and leaves
+        loaded = inspector._loaded_workflow
+        roots = loaded.roots()
+        leaves = loaded.leaves()
+
         # Root should be detected
-        assert inspector._get_node_status('input', workflow) == 'root'
+        assert (
+            inspector._get_node_status_cached('input', roots, leaves) == 'root'
+        )
         # Leaf should be detected
-        assert inspector._get_node_status('output', workflow) == 'leaf'
+        assert (
+            inspector._get_node_status_cached('output', roots, leaves)
+            == 'leaf'
+        )
         # Middle node should be valid (in file mode)
-        assert inspector._get_node_status('middle', workflow) == 'valid'
+        assert (
+            inspector._get_node_status_cached('middle', roots, leaves)
+            == 'valid'
+        )
 
     def test_info_text_contains_workflow_stats(self, inspector, tmp_path):
         """Test info text includes workflow statistics."""
@@ -170,36 +183,6 @@ class TestWorkflowInspector:
 
 class TestManagerStatusMethods:
     """Test status methods added to WorkflowManager."""
-
-    def test_get_layer_status_returns_all_statuses(self, make_napari_viewer):
-        """Test get_layer_status returns correct status for all node types."""
-        from ndev_workflows._manager import WorkflowManager
-
-        viewer = make_napari_viewer()
-        manager = WorkflowManager.install(viewer)
-
-        def identity(x):
-            return x
-
-        def process(a, b):
-            return a + b
-
-        # Build a workflow: input -> middle -> output
-        manager.workflow.set('middle', identity, 'input')
-        manager.workflow.set('output', process, 'middle', 'input')
-
-        # Root status (input nodes)
-        assert manager.get_layer_status('input') == 'root'
-
-        # Leaf status (output nodes)
-        assert manager.get_layer_status('output') == 'leaf'
-
-        # Valid status (middle nodes not pending)
-        assert manager.get_layer_status('middle') == 'valid'
-
-        # Invalid status (pending updates) - use public method to set state
-        manager.invalidate('middle')
-        assert manager.get_layer_status('middle') == 'invalid'
 
     def test_is_layer_pending(self, make_napari_viewer):
         """Test is_layer_pending method."""

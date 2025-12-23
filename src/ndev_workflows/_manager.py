@@ -129,28 +129,6 @@ class WorkflowManager:
         """
         return name in self._pending_updates
 
-    def get_layer_status(self, name: str) -> str:
-        """Get the status of a layer/task.
-
-        Parameters
-        ----------
-        name : str
-            The task name to check.
-
-        Returns
-        -------
-        str
-            One of 'root', 'leaf', 'invalid', or 'valid'.
-        """
-        if name in self._workflow.roots():
-            return 'root'
-        elif name in self._workflow.leaves():
-            return 'leaf'
-        elif name in self._pending_updates:
-            return 'invalid'
-        else:
-            return 'valid'
-
     def update(
         self,
         target_layer: str | Layer,

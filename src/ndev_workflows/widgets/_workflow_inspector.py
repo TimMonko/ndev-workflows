@@ -328,7 +328,6 @@ class WorkflowInspector(QWidget):
         # Graph drawing elements (for dynamic updates when dragging)
         self._edge_collection = None
         self._label_texts = None
-        self._current_workflow = None
 
         # Workflow source: file or live manager
         self._workflow_file: Path | None = None
@@ -521,29 +520,9 @@ class WorkflowInspector(QWidget):
         except (ImportError, AttributeError, RuntimeError):
             return None
 
-    def _get_node_status(self, node_name: str, workflow) -> str:
-        """Determine the status of a node.
-
-        Parameters
-        ----------
-        node_name : str
-            The name of the node/task.
-        workflow : Workflow
-            The workflow being inspected.
-
-        Returns
-        -------
-        str
-            One of 'root', 'leaf', 'invalid', or 'valid'.
-        """
-        return self._get_node_status_cached(
-            node_name, workflow, workflow.roots(), workflow.leaves()
-        )
-
     def _get_node_status_cached(
         self,
         node_name: str,
-        workflow,
         roots: list[str],
         leaves: list[str],
     ) -> str:
@@ -553,8 +532,6 @@ class WorkflowInspector(QWidget):
         ----------
         node_name : str
             The name of the node/task.
-        workflow : Workflow
-            The workflow being inspected.
         roots : list[str]
             Cached list of root nodes.
         leaves : list[str]
@@ -674,9 +651,7 @@ class WorkflowInspector(QWidget):
                     continue
                 visited.add(item)
 
-                status = self._get_node_status_cached(
-                    item, workflow, roots, leaves
-                )
+                status = self._get_node_status_cached(item, roots, leaves)
                 color = {
                     'root': '#dddddd',  # Light gray
                     'leaf': '#5599ff',  # Light blue
@@ -856,9 +831,6 @@ class WorkflowInspector(QWidget):
             # Fall back to spring layout if kamada_kawai fails
             self._positions = nx.spring_layout(self._graph)
 
-        # Store workflow reference for redraw callback
-        self._current_workflow = workflow
-
         # Draw edges (store reference for redrawing)
         self._edge_collection = nx.draw_networkx_edges(
             self._graph,
@@ -976,9 +948,7 @@ class WorkflowInspector(QWidget):
             leaves = workflow.leaves()
 
         for node in self._graph.nodes:
-            status = self._get_node_status_cached(
-                node, workflow, roots, leaves
-            )
+            status = self._get_node_status_cached(node, roots, leaves)
             self._graph_drawing.update_node_status(node, status)
 
         self.graph_widget.canvas.draw()
