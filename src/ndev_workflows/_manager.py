@@ -109,6 +109,26 @@ class WorkflowManager:
         """The undo/redo controller."""
         return self._undo_redo
 
+    @property
+    def pending_updates(self) -> list[str]:
+        """List of task names pending update (read-only copy)."""
+        return list(self._pending_updates)
+
+    def is_layer_pending(self, name: str) -> bool:
+        """Check if a layer/task is pending update.
+
+        Parameters
+        ----------
+        name : str
+            The task name to check.
+
+        Returns
+        -------
+        bool
+            True if the task is scheduled for update.
+        """
+        return name in self._pending_updates
+
     def update(
         self,
         target_layer: str | Layer,

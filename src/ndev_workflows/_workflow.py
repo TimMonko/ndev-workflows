@@ -447,8 +447,8 @@ class Workflow:
         """Return a string representation of the workflow."""
         n_tasks = len(self._tasks)
         roots = self.roots()
-        leafs = self.leaves()
-        return f'Workflow({n_tasks} tasks, roots={roots}, leafs={leafs})'
+        leaves = self.leaves()
+        return f'Workflow({n_tasks} tasks, roots={roots}, leaves={leaves})'
 
     def copy(self) -> Workflow:
         """Create a deep copy of this workflow.
