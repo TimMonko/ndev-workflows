@@ -7,6 +7,16 @@ contributions:
     - id: ndev-workflows.workflow_container
       title: Workflow Container
       python_name: ndev_workflows.widgets._workflow_container:WorkflowContainer
+    - id: ndev-workflows.workflow_inspector
+      title: Workflow Inspector
+      python_name: ndev_workflows.widgets._workflow_inspector:WorkflowInspector
+    - id: ndev-workflows.assistant
+      title: Assistant
+      python_name: ndev_workflows.widgets._assistant:AssistantWidget
   widgets:
     - command: ndev-workflows.workflow_container
       display_name: Workflow Container
+    - command: ndev-workflows.workflow_inspector
+      display_name: Workflow Inspector
+    - command: ndev-workflows.assistant
+      display_name: Workflow Assistant

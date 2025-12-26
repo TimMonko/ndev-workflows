@@ -36,6 +36,8 @@ dependencies = [
     "numpy",
     "dask",
     "pyyaml",
+    "networkx",  # also a transitive dependency of scikit-image, from napari
+    "npe2",
 ]
 
 [project.optional-dependencies]
