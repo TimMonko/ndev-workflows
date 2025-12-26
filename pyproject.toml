@@ -44,6 +44,8 @@ dependencies = [
 # Allow easily installation with the full, default napari installation
 # (including Qt backend) using ndev-workflows[all].
 all = ["napari[all]"]
+# Optional visualization dependencies for the workflow inspector graph view
+plot = ["matplotlib"]
 
 [dependency-groups]
 dev = [
