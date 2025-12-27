@@ -494,13 +494,8 @@ class WorkflowInspector(QWidget):
             The workflow to inspect, or None if not available.
         """
         if self._use_live_mode:
-            try:
-                from ndev_workflows._manager import WorkflowManager
-
-                manager = WorkflowManager.install(self._viewer)
-                return manager.workflow
-            except (ImportError, AttributeError, RuntimeError):
-                return None
+            manager = self._get_manager()
+            return manager.workflow if manager else None
         return self._loaded_workflow
 
     def _get_manager(self):

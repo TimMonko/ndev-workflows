@@ -20,46 +20,29 @@ Example
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from functools import lru_cache
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
 
 
-# Mapping from npe2 menu IDs to assistant categories
-# These are napari's built-in menu locations plus custom ones
-MENU_TO_CATEGORY = {
-    # napari built-in menus (where they exist)
-    "napari/layers/filter": "Remove noise",
-    "napari/layers/segment": "Segment",
-    "napari/layers/transform": "Transform",
-    "napari/layers/measure": "Measurement",
-    # Common custom submenus
-    "filtering": "Remove noise",
-    "segmentation": "Segment",
-    "labeling": "Label",
-    "measurement": "Measurement",
-    "skeleton": "Skeleton",
-    "morphology": "Morphology",
-    "visualization": "Visualization",
-}
-
 # Legacy display_name prefixes from napari-assistant
 DISPLAY_NAME_PREFIXES = {
-    "Filtering / noise removal >": "Remove noise",
-    "Filtering / background removal >": "Remove background",
-    "Filtering >": "Filter",
-    "Image math >": "Math",
-    "Transform >": "Transform",
-    "Projection >": "Projection",
-    "Segmentation / binarization >": "Binarize",
-    "Segmentation / labeling >": "Label",
-    "Segmentation post-processing >": "Process labels",
-    "Measurement >": "Measurement",
-    "Label neighbor filters >": "Label neighbor filters",
-    "Label filters >": "Label filters",
-    "Visualization >": "Visualization",
+    'Filtering / noise removal >': 'Remove noise',
+    'Filtering / background removal >': 'Remove background',
+    'Filtering >': 'Filter',
+    'Image math >': 'Math',
+    'Transform >': 'Transform',
+    'Projection >': 'Projection',
+    'Segmentation / binarization >': 'Binarize',
+    'Segmentation / labeling >': 'Label',
+    'Segmentation post-processing >': 'Process labels',
+    'Measurement >': 'Measurement',
+    'Label neighbor filters >': 'Label neighbor filters',
+    'Label filters >': 'Label filters',
+    'Visualization >': 'Visualization',
 }
 
 
@@ -84,10 +67,11 @@ def discover_from_menus() -> dict[str, list[tuple[str, Callable]]]:
     try:
         import npe2
     except ImportError:
-        print("npe2 not installed, skipping menu discovery")
+        print('npe2 not installed, skipping menu discovery')
         return {}
 
     pm = npe2.PluginManager.instance()
+    pm.discover()  # Ensure plugins are discovered even without a viewer
     operations: dict[str, list[tuple[str, Callable]]] = defaultdict(list)
 
     for pname, manifest in pm._manifests.items():
@@ -108,11 +92,7 @@ def discover_from_menus() -> dict[str, list[tuple[str, Callable]]]:
                 continue
 
             _process_menu_items(
-                menu_items,
-                manifest,
-                command_map,
-                category,
-                operations
+                menu_items, manifest, command_map, category, operations
             )
 
     return dict(operations)
@@ -124,19 +104,19 @@ def _process_menu_items(
     command_map,
     category,
     operations,
-    processed_submenus=None
+    processed_submenus=None,
 ):
     if processed_submenus is None:
         processed_submenus = set()
 
     for item in menu_items:
         # Handle submenus
-        if hasattr(item, "submenu"):
+        if hasattr(item, 'submenu'):
             submenu_id = item.submenu
             if submenu_id in processed_submenus:
                 continue
             processed_submenus.add(submenu_id)
-            
+
             # Find the submenu definition in menus
             if submenu_id in manifest.contributions.menus:
                 _process_menu_items(
@@ -145,12 +125,12 @@ def _process_menu_items(
                     command_map,
                     category,
                     operations,
-                    processed_submenus
+                    processed_submenus,
                 )
             continue
 
         # Handle commands
-        cmd_id = item.command if hasattr(item, "command") else None
+        cmd_id = item.command if hasattr(item, 'command') else None
         if cmd_id and cmd_id in command_map:
             cmd = command_map[cmd_id]
             try:
@@ -158,7 +138,7 @@ def _process_menu_items(
                 if func is not None:
                     operations[category].append((cmd.title, func))
             except Exception as e:
-                print(f"Failed to load {cmd_id}: {e}")
+                print(f'Failed to load {cmd_id}: {e}')
 
 
 def discover_from_display_names() -> dict[str, list[tuple[str, Callable]]]:
@@ -175,7 +155,7 @@ def discover_from_display_names() -> dict[str, list[tuple[str, Callable]]]:
     try:
         import npe2
     except ImportError:
-        print("npe2 not installed, skipping display_name discovery")
+        print('npe2 not installed, skipping display_name discovery')
         return {}
 
     pm = npe2.PluginManager.instance()
@@ -186,7 +166,7 @@ def discover_from_display_names() -> dict[str, list[tuple[str, Callable]]]:
             continue
 
         for widget in manifest.contributions.widgets:
-            display_name = widget.display_name or ""
+            display_name = widget.display_name or ''
 
             # Check if display_name matches any known prefix
             for prefix, category in DISPLAY_NAME_PREFIXES.items():
@@ -198,7 +178,7 @@ def discover_from_display_names() -> dict[str, list[tuple[str, Callable]]]:
                         if func is not None:
                             operations[category].append((op_name, func))
                     except Exception as e:
-                        print(f"Failed to load widget {display_name}: {e}")
+                        print(f'Failed to load widget {display_name}: {e}')
                     break
 
     return dict(operations)
@@ -271,24 +251,23 @@ def _get_category_from_menu_id(menu_id: str, plugin_name: str) -> str | None:
     str or None
         The category name, or None if not found.
     """
-    # Check exact match first
-    if menu_id in MENU_TO_CATEGORY:
-        return MENU_TO_CATEGORY[menu_id]
+    # Use the last part of the menu ID as the category
+    # e.g., "napari/layers/filter" -> "Filter"
+    # e.g., "my-plugin/filtering" -> "Filtering"
 
-    # Check if any known menu ID is in the string
-    for known_menu, category in MENU_TO_CATEGORY.items():
-        if known_menu in menu_id.lower():
-            return category
+    if '/' in menu_id:
+        parts = menu_id.split('/')
+        # Filter out 'napari' and 'layers' if they are just structural
+        if parts[0] == 'napari' and len(parts) > 1:
+            # napari/layers/filter -> Filter
+            # napari/tools/something -> Something
+            return parts[-1].replace('-', ' ').replace('_', ' ').title()
 
-    # Use plugin name as category for custom menus
-    # (e.g., "ndev-morphology" menu -> "ndev-morphology" category)
-    if "/" in menu_id:
-        # Extract the submenu part after plugin name
-        parts = menu_id.split("/")
-        if len(parts) >= 2:
-            return parts[-1].replace("-", " ").replace("_", " ").title()
+        # For custom menus like "my-plugin/filtering"
+        return parts[-1].replace('-', ' ').replace('_', ' ').title()
 
-    return plugin_name.replace("-", " ").replace("_", " ").title()
+    # Fallback to plugin name if it's a top-level menu (rare for commands)
+    return plugin_name.replace('-', ' ').replace('_', ' ').title()
 
 
 def _load_command_function(cmd) -> Callable | None:
@@ -304,11 +283,11 @@ def _load_command_function(cmd) -> Callable | None:
     Callable or None
         The loaded function, or None if loading failed.
     """
-    if not hasattr(cmd, "python_name") or not cmd.python_name:
+    if not hasattr(cmd, 'python_name') or not cmd.python_name:
         return None
 
     try:
-        module_path, func_name = cmd.python_name.rsplit(":", 1)
+        module_path, func_name = cmd.python_name.rsplit(':', 1)
         import importlib
 
         module = importlib.import_module(module_path)

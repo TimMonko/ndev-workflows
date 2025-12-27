@@ -99,6 +99,38 @@ class WorkflowManager:
         """The workflow being managed."""
         return self._workflow
 
+    def record_step(
+        self, func: Callable, params: dict[str, Any], output_name: str
+    ):
+        """Record a processing step into the workflow.
+
+        Parameters
+        ----------
+        func : Callable
+            The function that was executed.
+        params : dict[str, Any]
+            The parameters passed to the function.
+        output_name : str
+            The name of the output layer/result.
+        """
+        # Resolve layer objects to names in params
+        resolved_params = {}
+        for key, value in params.items():
+            if hasattr(value, 'name') and hasattr(
+                value, 'data'
+            ):  # It's a Layer
+                resolved_params[key] = value.name
+            else:
+                resolved_params[key] = value
+
+        # Add to workflow
+        # We assume kwargs are sufficient if the function supports them.
+        try:
+            self._workflow.set(output_name, func, **resolved_params)
+            # Trigger update or notification if needed
+        except Exception as e:
+            warnings.warn(f'Failed to record step {output_name}: {e}')
+
     @property
     def viewer(self) -> Viewer:
         """The napari viewer being managed."""
