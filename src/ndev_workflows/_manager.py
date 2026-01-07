@@ -71,8 +71,107 @@ class WorkflowManager:
         self._auto_update_enabled = True
         self._update_delay = 0.1  # seconds
 
+        # Hook into napari to intercept widget execution
+        self._install_hooks()
+
         # Start background worker
         self._start_worker()
+
+    def _install_hooks(self) -> None:
+        """Install hooks to intercept widget execution.
+
+        This hooks into napari's add_dock_widget to automatically
+        connect magicgui widgets to workflow recording.
+        """
+        # Wrap add_dock_widget to intercept new widgets
+        original_add_dock_widget = self._viewer.window.add_dock_widget
+
+        def wrapped_add_dock_widget(
+            widget, *, name='', area='right', allowed_areas=None, **kwargs
+        ):
+            """Wrapped add_dock_widget that connects widgets to recording."""
+            result = original_add_dock_widget(
+                widget,
+                name=name,
+                area=area,
+                allowed_areas=allowed_areas,
+                **kwargs,
+            )
+
+            # Try to connect to .called signal if it's a magicgui widget
+            actual_widget = widget
+            if hasattr(widget, 'widget'):
+                # It's a dock widget wrapping the actual widget
+                actual_widget = widget.widget
+
+            if hasattr(actual_widget, 'called'):
+                # Connect to recording
+                actual_widget.called.connect(
+                    lambda res: self._on_widget_called(actual_widget, res)
+                )
+                print(
+                    f'[WorkflowManager] Connected {name or "widget"} to workflow recording'
+                )
+
+            return result
+
+        self._viewer.window.add_dock_widget = wrapped_add_dock_widget
+
+    def _on_widget_called(self, widget: Any, result: Any) -> None:
+        """Handle widget execution to record workflow step.
+
+        Parameters
+        ----------
+        widget : Any
+            The magicgui widget that was executed.
+        result : Any
+            The result of the widget execution.
+        """
+        print(f'[WorkflowManager] Widget called: {widget}')
+        print(f'[WorkflowManager] Result type: {type(result)}')
+
+        # Extract function
+        func = None
+        if hasattr(widget, '_function'):
+            func = widget._function
+        elif hasattr(widget, 'func'):
+            func = widget.func
+        elif hasattr(widget, '__wrapped__'):
+            func = widget.__wrapped__
+
+        # Extract parameters
+        params = {}
+        if hasattr(widget, 'asdict'):
+            params = widget.asdict()
+            print(f'[WorkflowManager] Params: {params}')
+
+        # Determine output name
+        output_name = None
+        if result is not None:
+            # Check if result is a Layer
+            if hasattr(result, 'name'):
+                output_name = result.name
+            # Check if it's a LayerDataTuple (data, kwargs, type)
+            elif isinstance(result, (list, tuple)) and len(result) >= 2:
+                layer_data, layer_kwargs = result[0], result[1]
+                if isinstance(layer_kwargs, dict) and 'name' in layer_kwargs:
+                    output_name = layer_kwargs['name']
+                # Otherwise, check if a new layer was added
+                if output_name is None and len(self._viewer.layers) > 0:
+                    # Assume the most recently added layer is the output
+                    output_name = self._viewer.layers[-1].name
+
+        print(f'[WorkflowManager] Output name: {output_name}')
+
+        if func and output_name and params:
+            self.record_step(func, params, output_name)
+            from napari.utils.notifications import show_info
+
+            show_info(f'Recorded workflow step: {output_name}')
+        else:
+            print(
+                f'[WorkflowManager] Skipping - missing func={func is not None}, output={output_name}, params={bool(params)}'
+            )
 
     @classmethod
     def install(cls, viewer: Viewer) -> WorkflowManager:
