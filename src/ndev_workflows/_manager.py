@@ -148,18 +148,23 @@ class WorkflowManager:
         # Determine output name
         output_name = None
         if result is not None:
-            # Check if result is a Layer
-            if hasattr(result, 'name'):
+            # Check if result is a Layer object
+            if hasattr(result, 'name') and hasattr(result, 'data'):
                 output_name = result.name
             # Check if it's a LayerDataTuple (data, kwargs, type)
             elif isinstance(result, (list, tuple)) and len(result) >= 2:
                 layer_data, layer_kwargs = result[0], result[1]
                 if isinstance(layer_kwargs, dict) and 'name' in layer_kwargs:
                     output_name = layer_kwargs['name']
-                # Otherwise, check if a new layer was added
-                if output_name is None and len(self._viewer.layers) > 0:
-                    # Assume the most recently added layer is the output
-                    output_name = self._viewer.layers[-1].name
+
+        # Fallback: Check if a new layer was added (works for any return type)
+        # This handles widgets that return raw arrays or custom types
+        if output_name is None and len(self._viewer.layers) > 0:
+            # Assume the most recently added layer is the output
+            output_name = self._viewer.layers[-1].name
+            print(
+                f'[WorkflowManager] Using fallback - detected new layer: {output_name}'
+            )
 
         print(f'[WorkflowManager] Output name: {output_name}')
 
@@ -219,13 +224,30 @@ class WorkflowManager:
         - Separates task references (strings matching layer names) as positional args
         - Keeps literal values as keyword arguments
         """
-        # Resolve layer objects to names in params
+        # Resolve layer objects and arrays to names in params
         resolved_params = {}
         for key, value in params.items():
-            if hasattr(value, 'name') and hasattr(
-                value, 'data'
-            ):  # It's a Layer
+            # Check if it's a Layer object
+            if hasattr(value, 'name') and hasattr(value, 'data'):
                 resolved_params[key] = value.name
+            # Check if it's an array that matches a layer's data
+            elif hasattr(value, 'shape') and hasattr(value, 'ndim'):
+                # Try to find a matching layer by comparing array identity
+                layer_name = None
+                for layer in self._viewer.layers[
+                    ::-1
+                ]:  # Check most recent first
+                    if hasattr(layer, 'data') and layer.data is value:
+                        layer_name = layer.name
+                        break
+                if layer_name:
+                    resolved_params[key] = layer_name
+                    print(
+                        f'[WorkflowManager] Resolved array to layer: {layer_name}'
+                    )
+                else:
+                    # Keep as literal (might be a raw input)
+                    resolved_params[key] = value
             else:
                 resolved_params[key] = value
 
