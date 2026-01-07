@@ -112,6 +112,13 @@ class WorkflowManager:
             The parameters passed to the function.
         output_name : str
             The name of the output layer/result.
+
+        Notes
+        -----
+        This method automatically:
+        - Resolves Layer objects to their names
+        - Separates task references (strings matching layer names) as positional args
+        - Keeps literal values as keyword arguments
         """
         # Resolve layer objects to names in params
         resolved_params = {}
@@ -123,10 +130,25 @@ class WorkflowManager:
             else:
                 resolved_params[key] = value
 
-        # Add to workflow
-        # We assume kwargs are sufficient if the function supports them.
+        # Separate task references from literal values
+        # Task references (strings that match existing workflow tasks or layer names)
+        # should be passed as positional args for dependency tracking
+        task_refs = []
+        literal_kwargs = {}
+
+        for key, value in resolved_params.items():
+            if isinstance(value, str) and (
+                value in self._workflow._tasks or value in self._viewer.layers
+            ):
+                # This is a reference to another task/layer
+                task_refs.append(value)
+            else:
+                # This is a literal parameter value
+                literal_kwargs[key] = value
+
+        # Add to workflow with task refs as positional args
         try:
-            self._workflow.set(output_name, func, **resolved_params)
+            self._workflow.set(output_name, func, *task_refs, **literal_kwargs)
             # Trigger update or notification if needed
         except Exception as e:
             warnings.warn(f'Failed to record step {output_name}: {e}')
