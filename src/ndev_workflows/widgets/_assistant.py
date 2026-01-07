@@ -8,14 +8,11 @@ records executed operations into the workflow.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from magicgui import magicgui
-from magicgui.widgets import FunctionGui
-from napari.utils.notifications import show_info
 from qtpy.QtWidgets import (
     QFrame,
-    QLabel,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -36,6 +33,11 @@ class AssistantWidget(QWidget):
     def __init__(self, viewer: napari.viewer.Viewer):
         super().__init__()
         self.viewer = viewer
+
+        # CRITICAL: Install WorkflowManager FIRST to set up global hooks
+        # This ensures all widgets added by Assistant are automatically recorded
+        self._manager = WorkflowManager.install(viewer)
+
         self._operations = discover_all_operations()
         self._setup_ui()
 
@@ -112,56 +114,9 @@ class AssistantWidget(QWidget):
             # Wrap regular function
             widget = magicgui(func)
 
-        # Connect to called signal to record the step
-        # We use a closure to capture the function and widget
-        if hasattr(widget, 'called'):
-            widget.called.connect(
-                lambda result: self._record_workflow_step(func, widget, result)
-            )
+        # DON'T connect here - let the global WorkflowManager hook handle it
+        # The global hook in WorkflowManager._install_hooks() will automatically
+        # connect ALL widgets added via add_dock_widget
 
-        # Add to viewer
+        # Add to viewer - the global hook will connect automatically
         self.viewer.window.add_dock_widget(widget, name=name)
-
-    def _record_workflow_step(self, func: Callable, widget: Any, result: Any):
-        """Record an executed step into the workflow.
-
-        Parameters
-        ----------
-        func : Callable
-            The function that was executed.
-        widget : MagicGui or FunctionGui
-            The widget instance.
-        result : Any
-            The result of the execution.
-        """
-        manager = WorkflowManager.install(self.viewer)
-
-        # Extract parameters
-        params = {}
-        if hasattr(widget, 'asdict'):
-            params = widget.asdict()
-        elif hasattr(widget, 'current_choice'):  # Maybe a container?
-            # Fallback for complex widgets
-            pass
-
-        # Determine output name
-        output_name = None
-        if result is not None:
-            if hasattr(result, 'name'):
-                output_name = result.name
-            elif isinstance(result, (list, tuple)) and len(result) > 0:
-                # Handle list of layers (e.g. from some plugins)
-                if hasattr(result[0], 'name'):
-                    output_name = result[0].name
-
-        # If we couldn't find an output name from result, maybe check widget params?
-        # Some widgets have 'output_layer' param?
-
-        if output_name:
-            # We need the underlying function if it's wrapped
-            real_func = func
-            if hasattr(func, 'func'):  # MagicFactory
-                real_func = func.func
-
-            manager.record_step(real_func, params, output_name)
-            show_info(f'Recorded step: {output_name}')
