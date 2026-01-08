@@ -269,6 +269,15 @@ class Workflow:
 
                     # Create new partial with resolved kwargs
                     new_func = partial(func.func, **resolved_kwargs)
+
+                    # Wrap the function to handle LayerDataTuple inputs if needed
+                    if self._needs_layer_data_tuple_unwrapping(sig):
+                        new_func = partial(
+                            self._unwrap_layer_data_tuple_wrapper,
+                            new_func,
+                            sig,
+                        )
+
                     # Copy metadata
                     if hasattr(func, '_ndev_param_names'):
                         new_func._ndev_param_names = func._ndev_param_names
@@ -389,6 +398,73 @@ class Workflow:
 
         # Default to layer object (safer)
         return False
+
+    def _needs_layer_data_tuple_unwrapping(self, sig) -> bool:
+        """Check if function has any parameters expecting Layer objects.
+
+        If yes, we need to wrap it to convert LayerDataTuples to fake layer objects.
+        """
+        if sig is None:
+            return False
+
+        for param_name, param in sig.parameters.items():
+            if self._param_expects_layer_object(sig, param_name):
+                return True
+        return False
+
+    def _unwrap_layer_data_tuple_wrapper(self, func, sig, *args, **kwargs):
+        """Wrapper that converts LayerDataTuple inputs to layer-like objects.
+
+        If an argument is a tuple matching LayerDataTuple format (data, metadata, type),
+        create a simple object with .data and .name extracted from the tuple.
+        """
+
+        # Create a minimal layer-like class
+        class FakeLayer:
+            def __init__(self, data, name):
+                self.data = data
+                self.name = name
+
+        # Convert positional args
+        new_args = []
+        param_names = list(sig.parameters.keys())
+        for i, arg in enumerate(args):
+            if self._is_layer_data_tuple(arg):
+                # Check if this parameter expects a layer object
+                if i < len(param_names) and self._param_expects_layer_object(
+                    sig, param_names[i]
+                ):
+                    data, metadata, layer_type = arg
+                    name = metadata.get('name', 'unnamed')
+                    new_args.append(FakeLayer(data, name))
+                else:
+                    # Just extract data
+                    new_args.append(arg[0])
+            else:
+                new_args.append(arg)
+
+        # Convert kwargs
+        new_kwargs = {}
+        for key, value in kwargs.items():
+            if self._is_layer_data_tuple(value):
+                if self._param_expects_layer_object(sig, key):
+                    data, metadata, layer_type = value
+                    name = metadata.get('name', 'unnamed')
+                    new_kwargs[key] = FakeLayer(data, name)
+                else:
+                    # Just extract data
+                    new_kwargs[key] = value[0]
+            else:
+                new_kwargs[key] = value
+
+        return func(*new_args, **new_kwargs)
+
+    def _is_layer_data_tuple(self, value) -> bool:
+        """Check if value matches LayerDataTuple format: (data, dict, str)."""
+        if not isinstance(value, tuple) or len(value) != 3:
+            return False
+        data, metadata, layer_type = value
+        return isinstance(metadata, dict) and isinstance(layer_type, str)
 
     def roots(self) -> list[str]:
         """Return workflow input names (graph roots).
