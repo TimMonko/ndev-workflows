@@ -61,9 +61,18 @@ def workflow_to_spec_dict(
 
         saved_task_names.add(task_name)
 
-        params: dict[str, object] = {
-            f'arg{i}': arg for i, arg in enumerate(args)
-        }
+        # Check if function has attached parameter names (from ndev-workflows recording)
+        param_names = getattr(func, '_ndev_param_names', None)
+        if param_names and len(param_names) == len(args):
+            # Use actual parameter names instead of arg0, arg1
+            params: dict[str, object] = {
+                name: arg for name, arg in zip(param_names, args)
+            }
+        else:
+            # Fallback to arg0, arg1, etc.
+            params: dict[str, object] = {
+                f'arg{i}': arg for i, arg in enumerate(args)
+            }
         params.update(kwargs)
 
         tasks[task_name] = {
@@ -117,25 +126,60 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
                     f"Cannot import function '{func_name}' from '{module_path}': {e}"
                 ) from e
 
-        # Extract args and kwargs
-        args: list[object] = []
-        kwargs: dict[str, object] = {}
+        # Separate task references (strings that will be resolved by dask)
+        # from literal parameters
+        task_refs: list[str] = []  # Task names to resolve
+        task_ref_params: list[str] = []  # Parameter names for those tasks
+        literal_kwargs: dict[str, object] = {}
+
         for param_name, param_value in params.items():
+            # Check for old-style arg0, arg1 format
             if param_name.startswith('arg') and param_name[3:].isdigit():
-                idx = int(param_name[3:])
-                while len(args) <= idx:
-                    args.append(None)
-                args[idx] = param_value
+                # Legacy positional arg
+                if isinstance(param_value, str):
+                    task_refs.append(param_value)
+                    task_ref_params.append(param_name)  # Will use arg0, arg1
+                else:
+                    literal_kwargs[param_name] = param_value
+            elif isinstance(param_value, str) and param_value in tasks:
+                # New-style: parameter name with task reference
+                task_refs.append(param_value)
+                task_ref_params.append(param_name)
             else:
-                kwargs[param_name] = param_value
+                # Literal parameter
+                literal_kwargs[param_name] = param_value
 
-        # Apply kwargs
-        if kwargs and not lazy:
-            func = partial(func, **kwargs)
-        elif kwargs and lazy:
-            func.kwargs = kwargs
+        # Create wrapper if there are task references (for magicgui compatibility)
+        if task_refs:
+            if not lazy:
+                from functools import wraps
 
-        workflow._tasks[task_name] = (func, *args)
+                original_func = func
+
+                @wraps(original_func)
+                def wrapper(*task_data):
+                    # Rebuild kwargs with task data
+                    kwargs_with_data = literal_kwargs.copy()
+                    for param_name, data in zip(task_ref_params, task_data):
+                        kwargs_with_data[param_name] = data
+                    return original_func(**kwargs_with_data)
+
+                wrapper._ndev_param_names = task_ref_params
+                wrapper._ndev_wrapped_func = original_func
+                func = wrapper
+            else:
+                # For lazy loading, store metadata
+                func._ndev_param_names = task_ref_params
+                func.kwargs = literal_kwargs
+
+            workflow._tasks[task_name] = (func, *task_refs)
+        else:
+            # No task refs, just apply literal kwargs
+            if literal_kwargs and not lazy:
+                func = partial(func, **literal_kwargs)
+            elif literal_kwargs and lazy:
+                func.kwargs = literal_kwargs
+            workflow._tasks[task_name] = (func,)
 
     return workflow
 

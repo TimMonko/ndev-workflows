@@ -228,12 +228,12 @@ class WorkflowManager:
         # Resolve layer objects and arrays to names in params
         resolved_params = {}
         param_to_task_ref = {}  # Track which params are task references
-        
+
         for key, value in params.items():
             # Skip viewer and other non-serializable napari objects
             if key == 'viewer' or isinstance(value, type(self._viewer)):
                 continue
-                
+
             # Check if it's a Layer object
             if hasattr(value, 'name') and hasattr(value, 'data'):
                 resolved_params[key] = value.name
@@ -264,7 +264,7 @@ class WorkflowManager:
         task_ref_names = []  # Layer names for positional args
         task_ref_params = []  # Parameter names that map to those layer names
         literal_kwargs = {}
-        
+
         for key, value in resolved_params.items():
             if key in param_to_task_ref:
                 # This parameter should get a task reference
@@ -278,25 +278,38 @@ class WorkflowManager:
         # This is needed for magicgui compatibility
         if task_ref_params:
             from functools import wraps
-            
+
+            # Need to capture literal_kwargs in closure for runtime execution
+            _literal_kwargs = literal_kwargs  # Capture in closure
+
             @wraps(func)
             def wrapper(*task_data):
                 # Rebuild kwargs with task data
-                kwargs = literal_kwargs.copy()
+                kwargs = _literal_kwargs.copy()
                 for param_name, data in zip(task_ref_params, task_data):
                     kwargs[param_name] = data
                 return func(**kwargs)
-            
+
+            # Attach metadata for YAML serialization
+            # This preserves parameter names when saving/loading workflows
+            wrapper._ndev_param_names = task_ref_params
+            wrapper._ndev_wrapped_func = func
+
             # Ensure all referenced layers exist in workflow as input tasks
             for layer_name in task_ref_names:
                 if layer_name not in self._workflow._tasks:
                     # Add the layer data to workflow
                     layer = self._viewer.layers[layer_name]
                     self._workflow.set(layer_name, layer.data)
-                    print(f"[WorkflowManager] Auto-added input layer: {layer_name}")
-            
-            # Store with task refs as positional args (dask will resolve them)
-            self._workflow.set(output_name, wrapper, *task_ref_names)
+                    print(
+                        f'[WorkflowManager] Auto-added input layer: {layer_name}'
+                    )
+
+            # Store with task refs as positional args AND literal kwargs
+            # The kwargs will be stored in a partial for YAML serialization
+            self._workflow.set(
+                output_name, wrapper, *task_ref_names, **literal_kwargs
+            )
         else:
             # No task refs, just literals
             self._workflow.set(output_name, func, **literal_kwargs)
