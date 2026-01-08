@@ -416,11 +416,28 @@ class Workflow:
         """Wrapper that converts LayerDataTuple inputs to layer-like objects.
 
         If an argument is a tuple matching LayerDataTuple format (data, metadata, type),
-        create a simple object with .data and .name extracted from the tuple.
+        create a minimal object with .data and .name extracted from the tuple.
+
+        The FakeLayer is intentionally minimal - only includes properties that
+        functions commonly access during computation. Properties can be added
+        incrementally as needed.
         """
 
-        # Create a minimal layer-like class
+        # Minimal layer-like class with most commonly accessed properties
         class FakeLayer:
+            """Lightweight layer stand-in for workflow execution.
+
+            Provides the essential Layer interface that processing functions need,
+            without requiring an actual napari Layer instance. Properties are
+            extracted from LayerDataTuple metadata.
+
+            Current properties:
+            - .data: The numpy/dask array
+            - .name: Layer name string
+
+            Add more properties (scale, metadata, etc.) as functions require them.
+            """
+
             def __init__(self, data, name):
                 self.data = data
                 self.name = name

@@ -47,29 +47,29 @@ def workflow_to_spec_dict(
         args = task[1:]
 
         # Extract the actual function and kwargs, handling partial wrapping
+        callable_type = 'function'  # Default
         if isinstance(func, CallableRef):
             func_path = f'{func.module}.{func.name}'
             kwargs = getattr(func, 'kwargs', {})
             actual_func = func  # For metadata extraction
-            is_magic_factory = False
+            if hasattr(func, '_is_magic_factory') and func._is_magic_factory:
+                callable_type = 'magic_factory'
         elif isinstance(func, partial):
             actual_func = (
                 func.func
             )  # The wrapped function (might have metadata)
             # Check if this came from a MagicFactory
             parent_factory = getattr(actual_func, '_ndev_parent_factory', None)
-            is_magic_factory = parent_factory is not None
+            if parent_factory is not None:
+                callable_type = 'magic_factory'
             func_path = f'{actual_func.__module__}.{actual_func.__name__}'
-            if is_magic_factory:
-                func_path += '[MagicFactory]'  # Mark for special loading
             kwargs = dict(func.keywords) if func.keywords else {}
         elif callable(func):
             actual_func = func
             parent_factory = getattr(func, '_ndev_parent_factory', None)
-            is_magic_factory = parent_factory is not None
+            if parent_factory is not None:
+                callable_type = 'magic_factory'
             func_path = f'{func.__module__}.{func.__name__}'
-            if is_magic_factory:
-                func_path += '[MagicFactory]'
             kwargs = {}
         else:
             # Unknown task encoding
@@ -92,10 +92,15 @@ def workflow_to_spec_dict(
             }
         params.update(kwargs)
 
-        tasks[task_name] = {
+        task_spec = {
             'function': func_path,
             'params': params,
         }
+        # Only include callable_type if it's not the default 'function'
+        if callable_type != 'function':
+            task_spec['callable_type'] = callable_type
+
+        tasks[task_name] = task_spec
 
     # Inputs: referenced names that aren't saved as tasks.
     # Check all string parameters (task references) regardless of parameter name
@@ -135,37 +140,33 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
     for task_name, task_data in tasks.items():
         func_path = task_data['function']
         params = task_data.get('params', {})
-
-        # Check if this is a MagicFactory-wrapped function
-        is_magic_factory = func_path.endswith('[MagicFactory]')
-        if is_magic_factory:
-            func_path = func_path[: -len('[MagicFactory]')]
+        callable_type = task_data.get('callable_type', 'function')
 
         module_path, _, func_name = func_path.rpartition('.')
 
         if lazy:
             func = CallableRef(module_path, func_name)
-            func._is_magic_factory = (
-                is_magic_factory  # Store for later extraction
-            )
+            func._is_magic_factory = callable_type == 'magic_factory'
         else:
             try:
                 module = importlib.import_module(module_path)
                 func = getattr(module, func_name)
 
-                # If this was marked as from MagicFactory, extract the underlying function
-                if is_magic_factory:
-                    if type(func).__name__ == 'MagicFactory' and hasattr(
-                        func, 'function'
+                # If this is a MagicFactory, extract the underlying function
+                if callable_type == 'magic_factory':
+                    if (
+                        type(func).__name__ == 'MagicFactory'
+                        and hasattr(func, 'keywords')
+                        and 'function' in func.keywords
                     ):
                         print(
                             f'[spec_dict_to_workflow] Extracting function from MagicFactory: {func_name}'
                         )
-                        func = func.function
+                        func = func.keywords['function']
                     else:
                         # The function itself might be the unwrapped version already
                         print(
-                            f'[spec_dict_to_workflow] {func_name} marked as MagicFactory but got {type(func).__name__}'
+                            f'[spec_dict_to_workflow] {func_name} marked as magic_factory but got {type(func).__name__}'
                         )
             except (ImportError, AttributeError) as e:
                 raise ImportError(
