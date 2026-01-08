@@ -46,14 +46,30 @@ def workflow_to_spec_dict(
         func = task[0]
         args = task[1:]
 
+        # Extract the actual function and kwargs, handling partial wrapping
         if isinstance(func, CallableRef):
             func_path = f'{func.module}.{func.name}'
             kwargs = getattr(func, 'kwargs', {})
+            actual_func = func  # For metadata extraction
+            is_magic_factory = False
         elif isinstance(func, partial):
-            func_path = f'{func.func.__module__}.{func.func.__name__}'
+            actual_func = (
+                func.func
+            )  # The wrapped function (might have metadata)
+            # Check if this came from a MagicFactory
+            parent_factory = getattr(actual_func, '_ndev_parent_factory', None)
+            is_magic_factory = parent_factory is not None
+            func_path = f'{actual_func.__module__}.{actual_func.__name__}'
+            if is_magic_factory:
+                func_path += '[MagicFactory]'  # Mark for special loading
             kwargs = dict(func.keywords) if func.keywords else {}
         elif callable(func):
+            actual_func = func
+            parent_factory = getattr(func, '_ndev_parent_factory', None)
+            is_magic_factory = parent_factory is not None
             func_path = f'{func.__module__}.{func.__name__}'
+            if is_magic_factory:
+                func_path += '[MagicFactory]'
             kwargs = {}
         else:
             # Unknown task encoding
@@ -62,7 +78,8 @@ def workflow_to_spec_dict(
         saved_task_names.add(task_name)
 
         # Check if function has attached parameter names (from ndev-workflows recording)
-        param_names = getattr(func, '_ndev_param_names', None)
+        # Look on the actual function, not the partial wrapper
+        param_names = getattr(actual_func, '_ndev_param_names', None)
         if param_names and len(param_names) == len(args):
             # Use actual parameter names instead of arg0, arg1
             params: dict[str, object] = {
@@ -81,11 +98,17 @@ def workflow_to_spec_dict(
         }
 
     # Inputs: referenced names that aren't saved as tasks.
+    # Check all string parameters (task references) regardless of parameter name
     all_referenced: set[str] = set()
     for task_data in tasks.values():
-        for param_name, param_value in task_data['params'].items():
-            if isinstance(param_value, str) and param_name.startswith('arg'):
-                all_referenced.add(param_value)
+        for param_value in task_data['params'].values():
+            if isinstance(param_value, str):
+                # Check if this string matches a task name (task reference)
+                if (
+                    param_value in workflow.tasks
+                    or param_value in saved_task_names
+                ):
+                    all_referenced.add(param_value)
 
     inputs = [n for n in all_referenced if n not in saved_task_names]
     outputs = [n for n in saved_task_names if n not in all_referenced]
@@ -113,14 +136,37 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
         func_path = task_data['function']
         params = task_data.get('params', {})
 
+        # Check if this is a MagicFactory-wrapped function
+        is_magic_factory = func_path.endswith('[MagicFactory]')
+        if is_magic_factory:
+            func_path = func_path[: -len('[MagicFactory]')]
+
         module_path, _, func_name = func_path.rpartition('.')
 
         if lazy:
             func = CallableRef(module_path, func_name)
+            func._is_magic_factory = (
+                is_magic_factory  # Store for later extraction
+            )
         else:
             try:
                 module = importlib.import_module(module_path)
                 func = getattr(module, func_name)
+
+                # If this was marked as from MagicFactory, extract the underlying function
+                if is_magic_factory:
+                    if type(func).__name__ == 'MagicFactory' and hasattr(
+                        func, 'function'
+                    ):
+                        print(
+                            f'[spec_dict_to_workflow] Extracting function from MagicFactory: {func_name}'
+                        )
+                        func = func.function
+                    else:
+                        # The function itself might be the unwrapped version already
+                        print(
+                            f'[spec_dict_to_workflow] {func_name} marked as MagicFactory but got {type(func).__name__}'
+                        )
             except (ImportError, AttributeError) as e:
                 raise ImportError(
                     f"Cannot import function '{func_name}' from '{module_path}': {e}"
@@ -159,14 +205,19 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
                 @wraps(original_func)
                 def wrapper(*task_data):
                     # Rebuild kwargs with task data
-                    kwargs_with_data = literal_kwargs.copy()
+                    kwargs_with_data = {}
                     for param_name, data in zip(task_ref_params, task_data):
                         kwargs_with_data[param_name] = data
                     return original_func(**kwargs_with_data)
 
                 wrapper._ndev_param_names = task_ref_params
                 wrapper._ndev_wrapped_func = original_func
-                func = wrapper
+
+                # Store wrapper with literal kwargs in partial (matching recording behavior)
+                if literal_kwargs:
+                    func = partial(wrapper, **literal_kwargs)
+                else:
+                    func = wrapper
             else:
                 # For lazy loading, store metadata
                 func._ndev_param_names = task_ref_params

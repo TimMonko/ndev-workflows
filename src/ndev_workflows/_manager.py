@@ -130,14 +130,36 @@ class WorkflowManager:
         print(f'[WorkflowManager] Widget called: {widget}')
         print(f'[WorkflowManager] Result type: {type(result)}')
 
-        # Extract function
+        # Extract function - get the actual callable, not the factory
         func = None
+        parent_factory = None
+
         if hasattr(widget, '_function'):
             func = widget._function
         elif hasattr(widget, 'func'):
             func = widget.func
         elif hasattr(widget, '__wrapped__'):
             func = widget.__wrapped__
+
+        # Check if this function came from a MagicFactory
+        # by checking if there's a factory of the same name in its module
+        if func:
+            try:
+                import importlib
+
+                module = importlib.import_module(func.__module__)
+                potential_factory = getattr(module, func.__name__, None)
+                if (
+                    potential_factory
+                    and type(potential_factory).__name__ == 'MagicFactory'
+                ):
+                    # Store reference to factory for path resolution
+                    parent_factory = potential_factory
+                    print(
+                        f'[WorkflowManager] Function {func.__name__} is wrapped by MagicFactory'
+                    )
+            except Exception:
+                pass
 
         # Extract parameters
         params = {}
@@ -169,7 +191,7 @@ class WorkflowManager:
         print(f'[WorkflowManager] Output name: {output_name}')
 
         if func and output_name and params:
-            self.record_step(func, params, output_name)
+            self.record_step(func, params, output_name, parent_factory)
             from napari.utils.notifications import show_info
 
             show_info(f'Recorded workflow step: {output_name}')
@@ -204,7 +226,11 @@ class WorkflowManager:
         return self._workflow
 
     def record_step(
-        self, func: Callable, params: dict[str, Any], output_name: str
+        self,
+        func: Callable,
+        params: dict[str, Any],
+        output_name: str,
+        parent_factory: Any = None,
     ):
         """Record a processing step into the workflow.
 
@@ -216,6 +242,8 @@ class WorkflowManager:
             The parameters passed to the function.
         output_name : str
             The name of the output layer/result.
+        parent_factory : Any, optional
+            The MagicFactory instance if this function came from one.
 
         Notes
         -----
@@ -294,6 +322,9 @@ class WorkflowManager:
             # This preserves parameter names when saving/loading workflows
             wrapper._ndev_param_names = task_ref_params
             wrapper._ndev_wrapped_func = func
+            wrapper._ndev_parent_factory = (
+                parent_factory  # Track if from MagicFactory
+            )
 
             # Ensure all referenced layers exist in workflow as input tasks
             for layer_name in task_ref_names:

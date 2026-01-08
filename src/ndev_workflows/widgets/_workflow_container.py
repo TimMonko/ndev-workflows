@@ -446,7 +446,7 @@ class WorkflowContainer(Container):
 
         for task_idx, task in enumerate(self._tasks_select.value):
             func = workflow.get_function(task)
-            result = workflow.get(name=task)
+            result = workflow.get(name=task, viewer=self._viewer)
             yield task_idx, task, result, func
 
         return
