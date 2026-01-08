@@ -332,7 +332,7 @@ class WorkflowInspector(QWidget):
         # Workflow source: file or live manager
         self._workflow_file: Path | None = None
         self._loaded_workflow = None  # Workflow loaded from file
-        self._use_live_mode = False  # Whether to watch WorkflowManager
+        self._use_live_mode = True  # Start in live mode by default
 
         self._init_ui()
         self._start_timer()
@@ -350,11 +350,19 @@ class WorkflowInspector(QWidget):
 
         self.live_btn = QPushButton('Watch Live')
         self.live_btn.setCheckable(True)
+        self.live_btn.setChecked(True)  # Start checked
         self.live_btn.setToolTip('Watch the viewer WorkflowManager')
         self.live_btn.toggled.connect(self._on_live_toggled)
         mode_layout.addWidget(self.live_btn)
 
-        self.save_btn = QPushButton('Save Workflow...')
+        self.reset_btn = QPushButton('Reset Workflow')
+        self.reset_btn.setToolTip('Clear the live workflow (cannot be undone)')
+        self.reset_btn.clicked.connect(self._on_reset_clicked)
+        mode_layout.addWidget(self.reset_btn)
+
+        mode_layout.addStretch()
+
+        self.save_btn = QPushButton('Save...')
         self.save_btn.setToolTip('Save the current workflow to YAML file')
         self.save_btn.clicked.connect(self._on_save_clicked)
         mode_layout.addWidget(self.save_btn)
@@ -362,7 +370,7 @@ class WorkflowInspector(QWidget):
         layout.addLayout(mode_layout)
 
         # Status label
-        self.status_label = QLabel('No workflow loaded')
+        self.status_label = QLabel('Watching live WorkflowManager...')
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
@@ -486,6 +494,33 @@ class WorkflowInspector(QWidget):
                 self.status_label.setText(f'Saved: {Path(file_path).name}')
             except Exception as e:
                 self.status_label.setText(f'Error saving: {e}')
+
+    def _on_reset_clicked(self):
+        """Handle reset button click."""
+        from qtpy.QtWidgets import QMessageBox
+
+        from ndev_workflows._manager import WorkflowManager
+
+        # Only works in live mode
+        if not self._use_live_mode:
+            self.status_label.setText('Reset only works in live mode')
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self,
+            'Confirm Reset',
+            'This will clear the entire workflow and cannot be undone. Continue?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            manager = WorkflowManager.install(self._viewer)
+            manager.workflow._tasks.clear()
+            self.status_label.setText('Workflow reset')
+            self._graph = None  # Force graph redraw
+            self._update()
 
     def load_workflow_file(self, file_path: str | Path):
         """Load a workflow from a YAML file.
