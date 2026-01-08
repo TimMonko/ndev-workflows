@@ -350,11 +350,14 @@ class WorkflowInspector(QWidget):
 
         self.live_btn = QPushButton('Watch Live')
         self.live_btn.setCheckable(True)
-        self.live_btn.setToolTip(
-            'Watch the viewer WorkflowManager (requires napari-assistant or similar)'
-        )
+        self.live_btn.setToolTip('Watch the viewer WorkflowManager')
         self.live_btn.toggled.connect(self._on_live_toggled)
         mode_layout.addWidget(self.live_btn)
+
+        self.save_btn = QPushButton('Save Workflow...')
+        self.save_btn.setToolTip('Save the current workflow to YAML file')
+        self.save_btn.clicked.connect(self._on_save_clicked)
+        mode_layout.addWidget(self.save_btn)
 
         layout.addLayout(mode_layout)
 
@@ -450,6 +453,39 @@ class WorkflowInspector(QWidget):
             else:
                 self.status_label.setText('No workflow loaded')
         self._update()
+
+    def _on_save_clicked(self):
+        """Handle save button click."""
+        from ndev_workflows import save_workflow
+        from ndev_workflows._manager import WorkflowManager
+
+        # Get workflow to save
+        workflow = None
+        if self._use_live_mode:
+            # Get from live WorkflowManager
+            manager = WorkflowManager.install(self._viewer)
+            workflow = manager.workflow
+        elif self._loaded_workflow:
+            # Use loaded workflow
+            workflow = self._loaded_workflow
+        else:
+            self.status_label.setText('No workflow to save')
+            return
+
+        # Open save dialog
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            'Save Workflow',
+            '',
+            'YAML files (*.yaml *.yml);;All files (*)',
+        )
+
+        if file_path:
+            try:
+                save_workflow(Path(file_path), workflow)
+                self.status_label.setText(f'Saved: {Path(file_path).name}')
+            except Exception as e:
+                self.status_label.setText(f'Error saving: {e}')
 
     def load_workflow_file(self, file_path: str | Path):
         """Load a workflow from a YAML file.
