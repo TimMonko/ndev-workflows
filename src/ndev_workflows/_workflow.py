@@ -15,6 +15,8 @@ from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from ._types import expects_layer_object as _expects_layer_object
+
 if TYPE_CHECKING:
     pass
 
@@ -51,6 +53,22 @@ class MissingCallable:
     module: str
     name: str
     error: str
+
+
+class FakeLayer:
+    """Minimal Layer wrapper for batch workflows without viewer.
+
+    When a function expects a napari Layer object (with .data and .name attributes)
+    but we're running in batch mode without access to real layers, this provides
+    the minimal interface to make the function work.
+    """
+
+    def __init__(self, data, name: str):
+        self.data = data
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f'FakeLayer(name={self.name}, data.shape={getattr(self.data, "shape", "?")})'
 
 
 class WorkflowNotRunnableError(RuntimeError):
@@ -205,16 +223,105 @@ class Workflow:
             raise KeyError(f"Task '{name}' not found in workflow")
         return dask_get(tasks, name)
 
+    def _get_func_and_signature(self, func):
+        """Extract actual function and signature from potentially wrapped function."""
+        import inspect
+        from functools import partial
+
+        if not isinstance(func, partial):
+            try:
+                return func, inspect.signature(func)
+            except (ValueError, TypeError):
+                return func, None
+
+        # Handle partial functions
+        actual_func = func.func
+
+        # Check if this is our LayerDataTuple wrapper
+        if (
+            hasattr(actual_func, '__self__')
+            and hasattr(
+                actual_func.__self__, '_unwrap_layer_data_tuple_wrapper'
+            )
+            and len(func.args) >= 2
+        ):
+            # Our wrapper: partial(_unwrap_layer_data_tuple_wrapper, actual_func, sig)
+            return func.args[0], func.args[1]  # (actual_func, sig)
+
+        # Regular partial
+        try:
+            return actual_func, inspect.signature(actual_func)
+        except (ValueError, TypeError):
+            return actual_func, None
+
+    def _should_pass_layer_object(self, func, sig, param_name: str) -> bool:
+        """Determine if parameter expects Layer object vs raw data.
+
+        Checks stored types first (from YAML), falls back to signature inspection.
+        """
+        # Check if function has stored parameter types (from YAML spec)
+        param_types = getattr(func, '_ndev_param_types', {})
+        if param_name in param_types:
+            return param_types[param_name] == 'layer'
+
+        # Fall back to signature inspection
+        return _expects_layer_object(sig, param_name)
+
+    def _resolve_param_value(
+        self,
+        value,
+        param_name: str,
+        func,
+        sig,
+        tasks: dict,
+        layer_objects: dict,
+    ):
+        """Resolve a single parameter value based on type requirements."""
+        # If value references a task, check if it's computed or raw data
+        if isinstance(value, str) and value in tasks:
+            referenced_task = tasks[value]
+            is_computed_task = isinstance(referenced_task, tuple)
+
+            if is_computed_task:
+                # Leave as string reference for dask to resolve
+                # NOTE: dask can't resolve kwargs, only positional args!
+                return value
+
+            # Raw data in tasks - check if function needs Layer wrapper
+            if self._should_pass_layer_object(func, sig, param_name):
+                # Function needs Layer object
+                if value in layer_objects:
+                    return layer_objects[value]  # Use real Layer from viewer
+                else:
+                    # Batch mode: wrap data in FakeLayer
+                    return FakeLayer(referenced_task, value)
+            else:
+                # Function wants raw data
+                return referenced_task
+
+        # If value references viewer layer, resolve it
+        if isinstance(value, str) and value in layer_objects:
+            if self._should_pass_layer_object(func, sig, param_name):
+                return layer_objects[value]  # Pass Layer object
+            else:
+                return layer_objects[value].data  # Pass data array
+
+        # If value is already a Layer object
+        if hasattr(value, 'data') and hasattr(value, 'name'):
+            if self._should_pass_layer_object(func, sig, param_name):
+                return value  # Keep Layer object
+            else:
+                return value.data  # Extract data array
+
+        # Literal value (number, bool, string, etc.)
+        return value
+
     def _resolve_layer_references(self, tasks: dict, viewer) -> dict:
         """Resolve INPUT layer name strings to actual layers or layer data.
 
-        Only resolves strings that refer to viewer layers (inputs like 'membrane').
-        Strings that match task names (like 'median_filter result') are left as-is
-        for dask to resolve as task dependencies.
-
-        Checks function signatures to determine whether to pass:
-        - Full layer object (for napari.types.Image, napari.layers.Image, etc.)
-        - Just layer.data (for napari.types.ImageData, np.ndarray, etc.)
+        Resolves string references to viewer layers, determining whether to pass
+        the Layer object or just its data based on function signatures and stored
+        type annotations from YAML.
 
         Parameters
         ----------
@@ -228,240 +335,89 @@ class Workflow:
         dict
             Task graph with layer names resolved appropriately
         """
-        import inspect
         from functools import partial
 
         resolved_tasks = {}
-        # Map layer names to both the layer object and its data
         layer_objects = {layer.name: layer for layer in viewer.layers}
 
         for task_name, task_value in tasks.items():
-            # Skip resolution for non-tuple tasks (raw data, already correct type)
-            if not isinstance(task_value, tuple):
+            # Skip non-tuple tasks (raw data)
+            if not isinstance(task_value, tuple) or len(task_value) == 0:
                 resolved_tasks[task_name] = task_value
-            # If task value is a tuple (function call), resolve parameters
-            elif len(task_value) > 0:
-                func = task_value[0]
+                continue
 
-                # Handle partial functions (our wrapper creates these)
-                if isinstance(func, partial):
-                    # Get the actual function to inspect its signature
-                    actual_func = func.func
-                    
-                    # Check if this is our wrapper - if so, the signature is in the args
-                    if (hasattr(actual_func, '__self__') and 
-                        hasattr(actual_func.__self__, '_unwrap_layer_data_tuple_wrapper') and
-                        len(func.args) >= 2):
-                        # Our wrapper: partial(_unwrap_layer_data_tuple_wrapper, actual_func, sig)
-                        sig = func.args[1]  # Signature is second positional arg
-                        actual_func = func.args[0]  # Actual function is first positional arg
-                    else:
-                        # Regular partial, inspect normally
-                        try:
-                            sig = inspect.signature(actual_func)
-                        except (ValueError, TypeError):
-                            sig = None
+            func = task_value[0]
 
-                    # Resolve kwargs in the partial (only for viewer layers, not computed tasks)
-                    resolved_kwargs = {}
-                    for key, value in func.keywords.items():
-                        # Check if this value references something already in tasks
-                        if isinstance(value, str) and value in tasks:
-                            referenced_task = tasks[value]
-                            is_computed_task = isinstance(referenced_task, tuple)
-                            if is_computed_task:
-                                # Computed task - leave as string for dask to resolve
-                                # (but dask can't resolve kwargs, so this won't work!)
-                                # TODO: This is a limitation - computed tasks as kwargs won't resolve
-                                print(f'[resolve] param={key}, value={value} -> computed task (may not resolve in kwargs!)')
-                                resolved_kwargs[key] = value
-                            else:
-                                # Raw data already in tasks
-                                # Check if function has stored parameter types (from YAML spec)
-                                param_types = getattr(actual_func, '_ndev_param_types', {})
-                                if key in param_types:
-                                    needs_layer_object = (param_types[key] == 'layer')
-                                    print(f'[resolve] param={key}, value={value} -> using stored type: {param_types[key]}')
-                                else:
-                                    # Fall back to signature inspection
-                                    needs_layer_object = self._param_expects_layer_object(sig, key)
-                                    print(f'[resolve] param={key}, value={value} -> using signature inspection: needs_layer={needs_layer_object}')
-                                
-                                if needs_layer_object:
-                                    # Function wants Layer object but we have raw data
-                                    # Try to use viewer Layer if available, otherwise create FakeLayer
-                                    if value in layer_objects:
-                                        print(f'[resolve] param={key} -> using viewer Layer')
-                                        resolved_kwargs[key] = layer_objects[value]
-                                    else:
-                                        print(f'[resolve] param={key} -> wrapping data in FakeLayer')
-                                        # Create minimal FakeLayer wrapper for batch workflows
-                                        class FakeLayer:
-                                            def __init__(self, data, name):
-                                                self.data = data
-                                                self.name = name
-                                        resolved_kwargs[key] = FakeLayer(referenced_task, value)
-                                else:
-                                    print(f'[resolve] param={key} -> using raw data')
-                                    resolved_kwargs[key] = referenced_task
-                        elif isinstance(value, str) and value in layer_objects:
-                            # String reference to a viewer layer - resolve it
-                            needs_layer_object = (
-                                self._param_expects_layer_object(sig, key)
-                            )
-                            print(f'[resolve] param={key}, value={value}, needs_layer_object={needs_layer_object}')
-                            if needs_layer_object:
-                                resolved_kwargs[key] = layer_objects[value]
-                            else:
-                                resolved_kwargs[key] = layer_objects[
-                                    value
-                                ].data
-                        elif hasattr(value, 'data') and hasattr(value, 'name'):
-                            # Already a Layer object - check if we need to unwrap to .data
-                            needs_layer_object = (
-                                self._param_expects_layer_object(sig, key)
-                            )
-                            print(f'[resolve] param={key}, value={type(value).__name__}, needs_layer_object={needs_layer_object} (already Layer)')
-                            if needs_layer_object:
-                                resolved_kwargs[key] = value  # Keep Layer object
-                            else:
-                                resolved_kwargs[key] = value.data  # Unwrap to data array
-                        else:
-                            resolved_kwargs[key] = value
+            # Handle partial functions (keyword arguments)
+            if isinstance(func, partial):
+                actual_func, sig = self._get_func_and_signature(func)
 
-                    # Create new partial with resolved kwargs
-                    new_func = partial(func.func, **resolved_kwargs)
+                # Resolve each keyword argument
+                resolved_kwargs = {}
+                for key, value in func.keywords.items():
+                    resolved_kwargs[key] = self._resolve_param_value(
+                        value, key, actual_func, sig, tasks, layer_objects
+                    )
 
-                    # Wrap the function to handle LayerDataTuple inputs if needed
-                    if self._needs_layer_data_tuple_unwrapping(sig):
-                        new_func = partial(
-                            self._unwrap_layer_data_tuple_wrapper,
-                            new_func,
-                            sig,
-                        )
+                # Create new partial with resolved kwargs
+                new_func = partial(func.func, **resolved_kwargs)
 
-                    # Copy metadata
-                    if hasattr(func, '_ndev_param_names'):
-                        new_func._ndev_param_names = func._ndev_param_names
-                    if hasattr(func, '_ndev_wrapped_func'):
-                        new_func._ndev_wrapped_func = func._ndev_wrapped_func
-                    if hasattr(func, '_ndev_parent_factory'):
-                        new_func._ndev_parent_factory = (
-                            func._ndev_parent_factory
-                        )
+                # Wrap for LayerDataTuple handling if needed
+                if self._needs_layer_data_tuple_unwrapping(sig):
+                    new_func = partial(
+                        self._unwrap_layer_data_tuple_wrapper,
+                        new_func,
+                        sig,
+                    )
 
-                    resolved_tasks[task_name] = (new_func,) + task_value[1:]
-                else:
-                    # Non-partial function, resolve positional args
-                    # Try to get signature
-                    try:
-                        sig = inspect.signature(func)
-                        params = list(sig.parameters.values())
-                    except (ValueError, TypeError):
-                        sig = None
-                        params = []
+                # Copy metadata
+                for attr in (
+                    '_ndev_param_names',
+                    '_ndev_wrapped_func',
+                    '_ndev_parent_factory',
+                ):
+                    if hasattr(func, attr):
+                        setattr(new_func, attr, getattr(func, attr))
 
-                    resolved_args = []
-                    for i, arg in enumerate(task_value[1:]):
-                        # Check if this is a computed task (tuple) vs input data
-                        is_computed_task = isinstance(arg, str) and isinstance(tasks.get(arg), tuple)
-                        if isinstance(arg, str) and arg in layer_objects and not is_computed_task:
-                            # Check if this positional param expects a layer object
-                            if i < len(params):
-                                needs_layer_object = (
-                                    self._param_expects_layer_object(
-                                        sig, params[i].name
-                                    )
-                                )
-                                if needs_layer_object:
-                                    resolved_args.append(layer_objects[arg])
-                                else:
-                                    resolved_args.append(
-                                        layer_objects[arg].data
-                                    )
-                            else:
-                                # No type hint info, default to data
-                                resolved_args.append(layer_objects[arg].data)
-                        else:
-                            resolved_args.append(arg)
-                    resolved_tasks[task_name] = (func,) + tuple(resolved_args)
+                resolved_tasks[task_name] = (new_func,) + task_value[1:]
+
             else:
-                # Raw data or unrecognized format, keep as-is
-                resolved_tasks[task_name] = task_value
+                # Non-partial function, resolve positional args
+                actual_func, sig = self._get_func_and_signature(func)
+
+                try:
+                    params = list(sig.parameters.values()) if sig else []
+                except (ValueError, TypeError, AttributeError):
+                    params = []
+
+                resolved_args = []
+                for i, arg in enumerate(task_value[1:]):
+                    # Check if this is a computed task reference
+                    is_computed_task = isinstance(arg, str) and isinstance(
+                        tasks.get(arg), tuple
+                    )
+
+                    if (
+                        isinstance(arg, str)
+                        and arg in layer_objects
+                        and not is_computed_task
+                    ):
+                        # Resolve viewer layer reference
+                        param_name = (
+                            params[i].name if i < len(params) else f'arg{i}'
+                        )
+                        if i < len(params) and self._should_pass_layer_object(
+                            actual_func, sig, param_name
+                        ):
+                            resolved_args.append(layer_objects[arg])
+                        else:
+                            resolved_args.append(layer_objects[arg].data)
+                    else:
+                        resolved_args.append(arg)
+
+                resolved_tasks[task_name] = (func,) + tuple(resolved_args)
 
         return resolved_tasks
-
-    def _param_expects_layer_object(self, sig, param_name: str) -> bool:
-        """Check if a parameter expects a napari Layer object vs just data.
-
-        Parameters
-        ----------
-        sig : inspect.Signature or None
-            Function signature
-        param_name : str
-            Parameter name to check
-
-        Returns
-        -------
-        bool
-            True if parameter expects a Layer object, False if it expects data
-        """
-        if sig is None:
-            # No signature info - default to layer.data because it
-            # seems more likely that untyped functions are written for arrays
-            return False
-
-        if param_name not in sig.parameters:
-            return True
-
-        param = sig.parameters[param_name]
-        annotation = param.annotation
-
-        if annotation is inspect.Parameter.empty:
-            # No type hint - default to layer object
-            return True
-
-        # Get the string representation of the type
-        annotation_str = str(annotation)
-
-        # Check if it's a napari Layer CLASS (expects actual Layer object with .data, .name)
-        # These are the ONLY ones that need Layer objects:
-        if any(
-            x in annotation_str
-            for x in [
-                'napari.layers.Image',
-                'napari.layers.Labels',
-                'napari.layers.Points',
-                'napari.layers.Shapes',
-                'napari.layers.Surface',
-                'napari.layers.Vectors',
-            ]
-        ):
-            return True
-
-        # Check if it's data type (expects numpy array)
-        # NOTE: napari.types.Image, napari.types.Labels, etc. are DATA types, not Layer types!
-        if any(
-            x in annotation_str
-            for x in [
-                'napari.types.ImageData',
-                'napari.types.LabelsData',
-                'napari.types.Image',  # magicgui data annotation
-                'napari.types.Labels',  # magicgui data annotation
-                'napari.types.PointsData',
-                'napari.types.ShapesData',
-                'napari.types.SurfaceData',
-                'napari.types.VectorsData',
-                'numpy.ndarray',
-                'np.ndarray',
-                'ndarray',
-                'ArrayLike',
-            ]
-        ):
-            return False
-
-        # Default to layer object (safer)
-        return False
 
     def _needs_layer_data_tuple_unwrapping(self, sig) -> bool:
         """Check if function has any parameters expecting Layer objects.
@@ -471,8 +427,8 @@ class Workflow:
         if sig is None:
             return False
 
-        for param_name, param in sig.parameters.items():
-            if self._param_expects_layer_object(sig, param_name):
+        for param_name in sig.parameters:
+            if _expects_layer_object(sig, param_name):
                 return True
         return False
 
@@ -480,39 +436,15 @@ class Workflow:
         """Wrapper that converts LayerDataTuple inputs to layer-like objects.
 
         If an argument is a tuple matching LayerDataTuple format (data, metadata, type),
-        create a minimal object with .data and .name extracted from the tuple.
-
-        The FakeLayer is intentionally minimal - only includes properties that
-        functions commonly access during computation. Properties can be added
-        incrementally as needed.
+        create a FakeLayer object with .data and .name extracted from the tuple.
         """
-
-        # Minimal layer-like class with most commonly accessed properties
-        class FakeLayer:
-            """Lightweight layer stand-in for workflow execution.
-
-            Provides the essential Layer interface that processing functions need,
-            without requiring an actual napari Layer instance. Properties are
-            extracted from LayerDataTuple metadata.
-
-            Current properties:
-            - .data: The numpy/dask array
-            - .name: Layer name string
-
-            Add more properties (scale, metadata, etc.) as functions require them.
-            """
-
-            def __init__(self, data, name):
-                self.data = data
-                self.name = name
-
         # Convert positional args
         new_args = []
         param_names = list(sig.parameters.keys())
         for i, arg in enumerate(args):
             if self._is_layer_data_tuple(arg):
                 # Check if this parameter expects a layer object
-                if i < len(param_names) and self._param_expects_layer_object(
+                if i < len(param_names) and _expects_layer_object(
                     sig, param_names[i]
                 ):
                     data, metadata, layer_type = arg
@@ -528,7 +460,7 @@ class Workflow:
         new_kwargs = {}
         for key, value in kwargs.items():
             if self._is_layer_data_tuple(value):
-                if self._param_expects_layer_object(sig, key):
+                if _expects_layer_object(sig, key):
                     data, metadata, layer_type = value
                     name = metadata.get('name', 'unnamed')
                     new_kwargs[key] = FakeLayer(data, name)
@@ -678,7 +610,7 @@ class Workflow:
                         print(
                             f'[ensure_runnable] Extracting function from MagicFactory: {func.name}'
                         )
-                        
+
                         # IMPORTANT: Get signature from MagicFactory BEFORE extracting
                         # The MagicFactory has proper type annotations, but the extracted
                         # function might not (magicgui's _function is often untyped)
@@ -688,26 +620,42 @@ class Workflow:
                             if hasattr(widget, '_function'):
                                 # Use widget's _function which has magicgui's annotations
                                 extracted = widget._function
-                                print(f'[ensure_runnable] Extracted via widget._function: {extracted}')
+                                print(
+                                    f'[ensure_runnable] Extracted via widget._function: {extracted}'
+                                )
                                 # Try to preserve the original signature
                                 try:
-                                    extracted.__signature__ = inspect.signature(widget)
-                                    print('[ensure_runnable] Preserved MagicFactory signature on extracted function')
+                                    extracted.__signature__ = (
+                                        inspect.signature(widget)
+                                    )
+                                    print(
+                                        '[ensure_runnable] Preserved MagicFactory signature on extracted function'
+                                    )
                                 except Exception as e:
-                                    print(f'[ensure_runnable] Could not preserve signature: {e}')
+                                    print(
+                                        f'[ensure_runnable] Could not preserve signature: {e}'
+                                    )
                                 real_func = extracted
-                                print('[ensure_runnable] Successfully extracted callable function')
+                                print(
+                                    '[ensure_runnable] Successfully extracted callable function'
+                                )
                             else:
-                                print('[ensure_runnable] WARNING: widget has no _function attribute')
+                                print(
+                                    '[ensure_runnable] WARNING: widget has no _function attribute'
+                                )
                         except Exception as e:
-                            print(f'[ensure_runnable] ERROR extracting from MagicFactory: {e}')
+                            print(
+                                f'[ensure_runnable] ERROR extracting from MagicFactory: {e}'
+                            )
                             # Fallback to old method
                             if (
                                 hasattr(real_func, 'keywords')
                                 and 'function' in real_func.keywords
                             ):
                                 extracted = real_func.keywords['function']
-                                print(f'[ensure_runnable] Fallback extraction: {extracted}')
+                                print(
+                                    f'[ensure_runnable] Fallback extraction: {extracted}'
+                                )
                                 if callable(extracted):
                                     real_func = extracted
 
