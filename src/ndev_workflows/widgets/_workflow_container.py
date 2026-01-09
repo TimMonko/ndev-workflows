@@ -437,10 +437,13 @@ class WorkflowContainer(Container):
         ]
         self._root_scale = root_layer_list[0].scale
 
-        # Use stored input names (stable, from YAML metadata)
+        # Set workflow inputs positionally - dropdown order determines mapping
+        # Root dropdown 0 -> self._workflow_inputs[0], etc.
         for root_idx, root_layer in enumerate(root_layer_list):
+            input_name = self._workflow_inputs[root_idx]
+            print(f'[viewer_workflow] Setting input "{input_name}" = layer "{root_layer.name}" data (shape={root_layer.data.shape})')
             workflow.set(
-                name=self._workflow_inputs[root_idx],
+                name=input_name,
                 func_or_data=root_layer.data,
             )
 

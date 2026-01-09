@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
+from ruamel.yaml import YAML
 
 from ._io_legacy import is_legacy_format
 from ._spec import (
@@ -59,8 +59,11 @@ def save_workflow(
     """
     data = workflow_to_spec_dict(workflow, name=name, description=description)
 
-    with open(filename, 'w') as f:
-        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+    yaml_handler = YAML()
+    yaml_handler.default_flow_style = False
+    yaml_handler.preserve_quotes = True
+    with open(filename, 'w', encoding='utf-8') as f:
+        yaml_handler.dump(data, f)
 
 
 def load_workflow(filename: str | Path, *, lazy: bool = False) -> Workflow:
@@ -100,9 +103,10 @@ def load_workflow(filename: str | Path, *, lazy: bool = False) -> Workflow:
         is_legacy = True
     else:
         try:
-            with open(filename) as f:
-                spec = yaml.safe_load(f)
-        except yaml.YAMLError as e:
+            yaml_handler = YAML()
+            with open(filename, encoding='utf-8') as f:
+                spec = yaml_handler.load(f)
+        except Exception as e:
             raise WorkflowYAMLError(f'Failed to parse YAML: {e}') from e
         is_legacy = False
 
@@ -157,8 +161,10 @@ def migrate_legacy(
         include_modified=True,
     )
 
-    with open(output_file, 'w') as f:
-        yaml.safe_dump(spec, f, default_flow_style=False, sort_keys=False)
+    yaml_handler = YAML()
+    yaml_handler.default_flow_style = False
+    with open(output_file, 'w', encoding='utf-8') as f:
+        yaml_handler.dump(spec, f)
 
     # Return a normalized lazy workflow (new-format in-memory representation).
     return spec_dict_to_workflow(spec, lazy=True)

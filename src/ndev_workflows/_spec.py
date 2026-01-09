@@ -11,9 +11,12 @@ Legacy YAML parsing lives in `_io_legacy.py`.
 from __future__ import annotations
 
 import importlib
+import inspect
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+
+from ruamel.yaml.comments import CommentedMap
 
 from ._io_legacy import load_legacy_lazy
 from ._workflow import CallableRef, Workflow
@@ -46,8 +49,8 @@ def workflow_to_spec_dict(
         func = task[0]
         args = task[1:]
 
-        # Extract the actual function and kwargs, handling partial wrapping
-        callable_type = 'function'  # Default
+        # Extract the actual callable and kwargs, handling partial wrapping
+        callable_type = 'callable'  # Default (changed from 'function' for accuracy)
         if isinstance(func, CallableRef):
             func_path = f'{func.module}.{func.name}'
             kwargs = getattr(func, 'kwargs', {})
@@ -92,13 +95,25 @@ def workflow_to_spec_dict(
             }
         params.update(kwargs)
 
-        task_spec = {
-            'function': func_path,
-            'params': params,
-        }
-        # Only include callable_type if it's not the default 'function'
-        if callable_type != 'function':
-            task_spec['callable_type'] = callable_type
+        # Capture parameter types for proper resolution during execution
+        param_types = _extract_param_types(actual_func, list(params.keys()))
+
+        # Build task spec using CommentedMap for comment support
+        task_spec = CommentedMap()
+        task_spec['callable'] = func_path
+        
+        # Attach callable_type as comment on the callable line
+        if callable_type != 'callable':
+            task_spec.yaml_add_eol_comment(callable_type, 'callable')
+        
+        # Build params as CommentedMap with type comments
+        params_with_comments = CommentedMap(params)
+        if param_types:
+            for param_name, param_type in param_types.items():
+                if param_name in params_with_comments:
+                    params_with_comments.yaml_add_eol_comment(param_type, param_name)
+        
+        task_spec['params'] = params_with_comments
 
         tasks[task_name] = task_spec
 
@@ -125,6 +140,84 @@ def workflow_to_spec_dict(
     return spec
 
 
+def _extract_param_types(func: Any, param_names: list[str]) -> dict[str, str]:
+    """Extract parameter types from function signature.
+    
+    Returns dict mapping param_name to type string:
+    - 'layer': Expects napari Layer object (has .data, .name)
+    - 'data': Expects numpy array
+    - 'literal': Literal value (number, string, bool, etc.)
+    
+    For MagicFactory functions, creates widget instance to get proper annotations.
+    """
+    param_types = {}
+    
+    try:
+        # For MagicFactory, create widget to get annotated signature
+        if hasattr(func, '_is_magic_factory') and func._is_magic_factory:
+            try:
+                widget = func()
+                sig = inspect.signature(widget)
+            except Exception:
+                sig = inspect.signature(func)
+        else:
+            sig = inspect.signature(func)
+        
+        for param_name in param_names:
+            if param_name not in sig.parameters:
+                continue
+                
+            param = sig.parameters[param_name]
+            annotation = param.annotation
+            
+            if annotation is inspect.Parameter.empty:
+                # No type hint - default to 'data' (most functions expect arrays)
+                param_types[param_name] = 'data'
+                continue
+            
+            annotation_str = str(annotation)
+            
+            # Check if it's a napari Layer type (needs Layer object)
+            if any(
+                x in annotation_str
+                for x in [
+                    'napari.layers.Image',
+                    'napari.layers.Labels',
+                    'napari.layers.Points',
+                    'napari.layers.Shapes',
+                    'napari.layers.Surface',
+                    'napari.layers.Vectors',
+                ]
+            ):
+                param_types[param_name] = 'layer'
+            # Check if it's a data type (numpy array)
+            elif any(
+                x in annotation_str
+                for x in [
+                    'napari.types.ImageData',
+                    'napari.types.LabelsData',
+                    'napari.types.Image',
+                    'napari.types.Labels',
+                    'numpy.ndarray',
+                    'np.ndarray',
+                    'ndarray',
+                    'ArrayLike',
+                ]
+            ):
+                param_types[param_name] = 'data'
+            else:
+                # Everything else is a literal value
+                param_types[param_name] = 'literal'
+                
+    except Exception as e:
+        # If signature inspection fails, return empty dict
+        # Resolution will fall back to default behavior
+        print(f'[_extract_param_types] Could not extract types: {e}')
+        return {}
+    
+    return param_types
+
+
 def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
     """Convert a new-format YAML spec dict to a Workflow object."""
     workflow = Workflow()
@@ -138,9 +231,35 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
     tasks = spec.get('tasks', {})
 
     for task_name, task_data in tasks.items():
-        func_path = task_data['function']
+        # Support both 'callable' (new) and 'function' (legacy) for backward compatibility
+        func_path = task_data.get('callable') or task_data.get('function')
         params = task_data.get('params', {})
-        callable_type = task_data.get('callable_type', 'function')
+        
+        # Try to get callable_type from:
+        # 1. Comment on callable line (ruamel.yaml)
+        # 2. Explicit callable_type field (backward compat)
+        # 3. Default to 'callable'
+        callable_type = 'callable'
+        if hasattr(task_data, 'ca') and hasattr(task_data.ca, 'items'):
+            # Check for comment on 'callable' key
+            callable_comment = task_data.ca.items.get('callable')
+            if callable_comment and callable_comment[2]:  # [2] is the end-of-line comment
+                callable_type = callable_comment[2].value.strip().lstrip('#').strip()
+        if callable_type == 'callable':  # Still default, check explicit field
+            callable_type = task_data.get('callable_type', 'callable')
+        
+        # Extract parameter types from comments
+        param_types = {}
+        if hasattr(params, 'ca') and hasattr(params.ca, 'items'):
+            for param_name in params.keys():
+                param_comment = params.ca.items.get(param_name)
+                if param_comment and param_comment[2]:  # [2] is the end-of-line comment
+                    param_type = param_comment[2].value.strip().lstrip('#').strip()
+                    param_types[param_name] = param_type
+        
+        # Fallback to explicit param_types field (backward compat)
+        if not param_types:
+            param_types = task_data.get('param_types', {})
 
         module_path, _, func_name = func_path.rpartition('.')
 
@@ -168,6 +287,12 @@ def spec_dict_to_workflow(spec: dict, *, lazy: bool = False) -> Workflow:
                         print(
                             f'[spec_dict_to_workflow] {func_name} marked as magic_factory but got {type(func).__name__}'
                         )
+                
+                # Attach parameter types to function for use during resolution
+                if param_types:
+                    func._ndev_param_types = param_types
+                    print(f'[spec_dict_to_workflow] Attached param_types to {func_name}: {param_types}')
+                    
             except (ImportError, AttributeError) as e:
                 raise ImportError(
                     f"Cannot import function '{func_name}' from '{module_path}': {e}"
