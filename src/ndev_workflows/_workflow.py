@@ -145,11 +145,26 @@ class Workflow:
             self._tasks[name] = func_or_data
             return
 
-        func: Callable
+        func: Callable = func_or_data
+
+        # Unwrap MagicFactory to get the underlying function
+        # MagicFactory is a partial wrapping FunctionGui class
+        # We create a FunctionGui instance and extract its ._function attribute
+        if type(func).__name__ == 'MagicFactory':
+            try:
+                widget = func()  # Create FunctionGui instance
+                func = widget._function  # Extract underlying function
+                # Attach reference to original factory for type extraction
+                func._ndev_parent_factory = func_or_data
+            except Exception:
+                # If widget creation fails, try to get function from keywords
+                func = func.keywords.get('function', func)
+                func._ndev_parent_factory = func_or_data
+
         # Store only explicitly provided kwargs; do not bake in defaults.
         # This keeps YAML exports minimal/stable and matches typical
         # napari-workflows behavior.
-        func = partial(func_or_data, **kwargs) if kwargs else func_or_data
+        func = partial(func, **kwargs) if kwargs else func
 
         # Store as dask-compatible task tuple
         self._tasks[name] = (func, *args)

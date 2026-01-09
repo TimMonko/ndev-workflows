@@ -18,7 +18,7 @@ from pathlib import Path
 from ruamel.yaml.comments import CommentedMap
 
 from ._io_legacy import load_legacy_lazy
-from ._types import extract_param_types as _extract_param_types_impl
+from ._types import extract_type_strings
 from ._workflow import CallableRef, Workflow
 
 
@@ -112,10 +112,45 @@ def workflow_to_spec_dict(
             }
         params.update(kwargs)
 
-        # Capture parameter types for proper resolution during execution
-        param_types = _extract_param_types_impl(
-            actual_func, list(params.keys())
-        )
+        # Capture full parameter type strings for YAML comments
+        # Extract types using actual function parameter names, not YAML keys (arg0, arg1, etc.)
+        # Get the actual parameter names from the function signature
+        import inspect
+
+        try:
+            sig = inspect.signature(actual_func)
+            actual_param_names = list(sig.parameters.keys())
+            # For positional args (arg0, arg1), map to actual names
+            # For kwargs, use the provided names
+            type_strings = extract_type_strings(
+                actual_func, actual_param_names, include_return=True
+            )
+            # Build a mapping from YAML keys to type strings
+            # arg0 -> image type, arg1 -> labels type, etc.
+            yaml_key_to_type = {}
+            arg_index = 0
+            for yaml_key in params.keys():
+                if yaml_key.startswith('arg') and yaml_key[3:].isdigit():
+                    # Positional arg - map to actual param name
+                    if arg_index < len(actual_param_names):
+                        actual_name = actual_param_names[arg_index]
+                        if actual_name in type_strings:
+                            yaml_key_to_type[yaml_key] = type_strings[
+                                actual_name
+                            ]
+                        arg_index += 1
+                elif yaml_key in type_strings:
+                    # Keyword arg - direct mapping
+                    yaml_key_to_type[yaml_key] = type_strings[yaml_key]
+            # Include return type
+            if 'return' in type_strings:
+                yaml_key_to_type['return'] = type_strings['return']
+            type_strings = yaml_key_to_type
+        except Exception:
+            # Fallback to basic extraction
+            type_strings = extract_type_strings(
+                actual_func, list(params.keys()), include_return=True
+            )
 
         # Build task spec using CommentedMap for comment support
         task_spec = CommentedMap()
@@ -127,32 +162,61 @@ def workflow_to_spec_dict(
 
         # Build params as CommentedMap with type comments
         params_with_comments = CommentedMap(params)
-        if param_types:
-            for param_name, param_type in param_types.items():
+        if type_strings:
+            for param_name, type_str in type_strings.items():
+                # Skip return type (not a param)
+                if param_name == 'return':
+                    continue
                 if param_name in params_with_comments:
                     params_with_comments.yaml_add_eol_comment(
-                        param_type, param_name
+                        type_str, param_name
                     )
 
         task_spec['params'] = params_with_comments
 
+        # Add return type comment on the callable line if present
+        if 'return' in type_strings:
+            # Add return type after callable_type comment (if present)
+            existing_comment = task_spec.ca.items.get('callable')
+            if existing_comment and existing_comment[2]:
+                # Has existing comment, append return type
+                task_spec.ca.items['callable'][
+                    2
+                ].value = (
+                    f'{existing_comment[2].value} -> {type_strings["return"]}'
+                )
+            else:
+                # No existing comment, just add return type
+                task_spec.yaml_add_eol_comment(
+                    f'-> {type_strings["return"]}', 'callable'
+                )
+
         tasks[task_name] = task_spec
 
-    # Inputs: referenced names that aren't saved as tasks.
-    # Check all string parameters (task references) regardless of parameter name
-    all_referenced: set[str] = set()
+    # Inputs: string parameters that reference external data (not defined as tasks)
+    # Outputs: tasks that aren't referenced by other tasks
+    all_string_refs: set[str] = set()
+    task_refs: set[str] = set()
+
     for task_data in tasks.values():
         for param_value in task_data['params'].values():
             if isinstance(param_value, str):
-                # Check if this string matches a task name (task reference)
+                all_string_refs.add(param_value)
+                # Check if this string references a task
                 if (
                     param_value in workflow.tasks
                     or param_value in saved_task_names
                 ):
-                    all_referenced.add(param_value)
+                    task_refs.add(param_value)
 
-    inputs = [n for n in all_referenced if n not in saved_task_names]
-    outputs = [n for n in saved_task_names if n not in all_referenced]
+    # Inputs are string refs that DON'T match saved tasks (external layer names, file paths, etc.)
+    inputs = sorted(
+        [ref for ref in all_string_refs if ref not in saved_task_names]
+    )
+    # Outputs are tasks that aren't referenced by other tasks
+    outputs = sorted(
+        [name for name in saved_task_names if name not in task_refs]
+    )
 
     spec['inputs'] = inputs
     spec['outputs'] = outputs
