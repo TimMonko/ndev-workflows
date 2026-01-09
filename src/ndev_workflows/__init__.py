@@ -26,7 +26,8 @@ except ImportError:
     __version__ = 'unknown'
 
 from ._io import load_workflow, save_workflow
-from ._workflow import FakeLayer, Workflow
+from ._resolution import FakeLayer
+from ._workflow import Workflow
 
 __all__ = [
     'Workflow',
